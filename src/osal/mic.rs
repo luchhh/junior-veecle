@@ -42,23 +42,24 @@ impl CpalMic {
         use cpal::traits::{DeviceTrait, HostTrait};
         let host = cpal::default_host();
 
-        // Prefer a USB audio device; fall back to the system default.
-        let device = host
+        // Try hw: first, then plughw: (software-converted), then fall back.
+        // cpal names ALSA devices exactly as they appear in `arecord -L`.
+        let (device, config) = host
             .input_devices()
             .expect("Failed to enumerate input devices")
-            .find(|d| {
+            .filter(|d| {
                 d.name()
-                    .map(|n| n.to_uppercase().contains("USB"))
+                    .map(|n| n.starts_with("hw:") || n.starts_with("plughw:"))
                     .unwrap_or(false)
             })
-            .or_else(|| host.default_input_device())
-            .expect("No audio input device found");
+            .find_map(|d| d.default_input_config().ok().map(|c| (d, c)))
+            .or_else(|| {
+                host.default_input_device()
+                    .and_then(|d| d.default_input_config().ok().map(|c| (d, c)))
+            })
+            .expect("No usable audio input device found");
 
         println!("[CpalMic] Using device: {}", device.name().unwrap_or_default());
-
-        let config = device
-            .default_input_config()
-            .expect("No default input config");
         Self {
             native_rate: config.sample_rate().0,
         }
