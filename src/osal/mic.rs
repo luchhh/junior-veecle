@@ -41,9 +41,21 @@ impl CpalMic {
     pub fn new() -> Self {
         use cpal::traits::{DeviceTrait, HostTrait};
         let host = cpal::default_host();
+
+        // Prefer a USB audio device; fall back to the system default.
         let device = host
-            .default_input_device()
+            .input_devices()
+            .expect("Failed to enumerate input devices")
+            .find(|d| {
+                d.name()
+                    .map(|n| n.to_uppercase().contains("USB"))
+                    .unwrap_or(false)
+            })
+            .or_else(|| host.default_input_device())
             .expect("No audio input device found");
+
+        println!("[CpalMic] Using device: {}", device.name().unwrap_or_default());
+
         let config = device
             .default_input_config()
             .expect("No default input config");
