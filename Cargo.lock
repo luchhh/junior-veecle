@@ -1792,6 +1792,7 @@ dependencies = [
  "pin-project",
  "typenum",
  "veecle-os-runtime-macros",
+ "veecle-telemetry",
  "wakerset",
 ]
 
