@@ -2,6 +2,7 @@
 name = "junior-veecle"
 version = "0.1.0"
 edition = "2024"
+default-run = "junior-audio"
 
 [[bin]]
 name = "junior-whisper"
