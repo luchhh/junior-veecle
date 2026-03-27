@@ -16,7 +16,7 @@ jobs:
           git -C ~/junior-veecle pull origin ${{ github.ref_name }}
 
       - name: Build
-        run: cargo -C ~/junior-veecle build
+        run: cargo build --manifest-path ~/junior-veecle/Cargo.toml
 
       - name: Restart Junior
         run: |
