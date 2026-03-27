@@ -1,0 +1,24 @@
+name: Deploy to Junior
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, arm64]
+    steps:
+      - name: Update code
+        run: |
+          git -C ~/junior-veecle fetch origin
+          git -C ~/junior-veecle checkout ${{ github.ref_name }}
+          git -C ~/junior-veecle pull origin ${{ github.ref_name }}
+
+      - name: Build
+        run: cargo -C ~/junior-veecle build
+
+      - name: Restart Junior
+        run: |
+          sudo systemctl restart junior
+          echo "Deployed $(git -C ~/junior-veecle rev-parse --short HEAD) from ${{ github.ref_name }}"
