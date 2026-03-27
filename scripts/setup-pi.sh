@@ -84,6 +84,17 @@ echo "    https://github.com/luchhh/junior-veecle/settings/actions/runners/new"
 echo "    Install to: $HOME/actions-runner"
 echo ""
 
+# Add cargo to PATH in runner environment so it's available in non-interactive shells
+RUNNER_ENV="$HOME/actions-runner/.env"
+if [ -f "$RUNNER_ENV" ] && ! grep -q "cargo" "$RUNNER_ENV"; then
+    echo "==> Adding cargo to GitHub Actions runner PATH..."
+    echo "PATH=$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> "$RUNNER_ENV"
+    sudo systemctl restart "actions.runner.luchhh-junior-veecle.$(hostname).service" || true
+elif [ ! -f "$RUNNER_ENV" ]; then
+    echo "==> Runner not installed yet — remember to add cargo to PATH after setup:"
+    echo "    echo 'PATH=$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' >> ~/actions-runner/.env"
+fi
+
 # --- Done ---
 echo "==> Done. Start Junior with: sudo systemctl start junior"
 echo "    Watch logs with:          journalctl -u junior -f"
