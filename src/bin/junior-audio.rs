@@ -11,7 +11,7 @@ use junior_veecle::actors::{
     command_executor::CommandExecutorActor,
 };
 
-#[veecle_os::osal::std::main(telemetry = true)]
+#[veecle_os::osal::std::main(telemetry = false)]
 async fn main() {
     dotenvy::dotenv().ok();
     veecle_os::telemetry::info!("Junior starting", pipeline = "audio");

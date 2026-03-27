@@ -35,17 +35,128 @@ pub trait MicAbstraction {
 
 pub struct CpalMic {
     native_rate: u32,
+    native_channels: u16,
 }
 
 impl CpalMic {
     pub fn new() -> Self {
-        use cpal::traits::{DeviceTrait, HostTrait};
+        use cpal::traits::DeviceTrait;
         let host = cpal::default_host();
 
-        // Try hw: first, then plughw: (software-converted), then fall back.
-        // cpal names ALSA devices exactly as they appear in `arecord -L`.
-        let (device, config) = host
-            .input_devices()
+        // On Linux: prefer hw:/plughw: ALSA devices; fall back to default.
+        // On other platforms (macOS, Windows): use the default input device directly.
+        let (device, config) = find_input_device(&host);
+
+        println!("[CpalMic] Using device: {}", device.name().unwrap_or_default());
+        Self {
+            native_rate: config.sample_rate().0,
+            native_channels: config.channels(),
+        }
+    }
+}
+
+impl MicAbstraction for CpalMic {
+    fn start(self) -> MicHandle {
+        #[cfg(target_os = "macos")]
+        request_microphone_permission_macos();
+
+        let paused = Arc::new(AtomicBool::new(false));
+        let paused_thread = paused.clone();
+        let (tx, rx) = mpsc::channel::<Vec<f32>>(4);
+
+        std::thread::Builder::new()
+            .name("cpal-capture".into())
+            .spawn(move || capture_thread(tx, paused_thread, self.native_rate, self.native_channels))
+            .expect("Failed to spawn audio capture thread");
+
+        MicHandle {
+            rx,
+            native_rate: self.native_rate,
+            paused,
+        }
+    }
+}
+
+// AVFoundation FFI — macOS only.
+// The extern blocks are at module level so #[link] is resolved at link time.
+#[cfg(target_os = "macos")]
+#[link(name = "AVFoundation", kind = "framework")]
+unsafe extern "C" {
+    static AVMediaTypeAudio: *const std::ffi::c_void;
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn objc_getClass(name: *const std::ffi::c_char) -> *const std::ffi::c_void;
+    fn sel_registerName(name: *const std::ffi::c_char) -> *const std::ffi::c_void;
+    #[link_name = "objc_msgSend"]
+    fn av_capture_device_request_access(
+        cls: *const std::ffi::c_void,
+        sel: *const std::ffi::c_void,
+        media_type: *const std::ffi::c_void,
+        handler: *const std::ffi::c_void,
+    );
+}
+
+/// Request macOS microphone permission via AVFoundation before opening the stream.
+///
+/// AVFoundation shows the dialog on the main thread's run loop. We must NOT block
+/// the calling thread — instead we spawn a dedicated thread that waits for the
+/// callback while the main/Tokio thread stays free to process UI events.
+#[cfg(target_os = "macos")]
+fn request_microphone_permission_macos() {
+    use std::sync::{Arc, Condvar, Mutex};
+
+    let result = Arc::new((Mutex::new(None::<bool>), Condvar::new()));
+    let result2 = result.clone();
+
+    // ObjC BOOL is i8 on macOS; 0 = false, non-zero = true.
+    let block: block2::RcBlock<dyn Fn(i8)> = block2::RcBlock::new(move |granted: i8| {
+        let (lock, cvar) = &*result2;
+        *lock.lock().unwrap() = Some(granted != 0);
+        cvar.notify_one();
+    });
+
+    unsafe {
+        let cls = objc_getClass(b"AVCaptureDevice\0".as_ptr() as *const std::ffi::c_char);
+        let sel = sel_registerName(
+            b"requestAccessForMediaType:completionHandler:\0".as_ptr()
+                as *const std::ffi::c_char,
+        );
+        let block_ptr = &*block as *const block2::Block<dyn Fn(i8)> as *const std::ffi::c_void;
+        av_capture_device_request_access(cls, sel, AVMediaTypeAudio, block_ptr);
+    }
+
+    // Spawn a thread to wait for the callback so the main thread stays free
+    // (AVFoundation dispatches the dialog UI on the main run loop).
+    let result3 = result.clone();
+    std::thread::spawn(move || {
+        let (lock, cvar) = &*result3;
+        let mut guard = lock.lock().unwrap();
+        while guard.is_none() {
+            guard = cvar.wait(guard).unwrap();
+        }
+        if guard.unwrap() {
+            println!("[CpalMic] Microphone permission granted");
+        } else {
+            eprintln!("[CpalMic] Microphone permission denied — audio will be silent");
+        }
+    });
+
+    // Keep block alive on the calling thread briefly so AVFoundation can copy it.
+    // After Block_copy the ObjC runtime owns the block; we can drop our handle.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    drop(block);
+}
+
+/// Select the best available input device for the current platform.
+fn find_input_device(host: &cpal::Host) -> (cpal::Device, cpal::SupportedStreamConfig) {
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    #[cfg(target_os = "linux")]
+    {
+        // Prefer hw: then plughw: (ALSA direct/plugin devices).
+        host.input_devices()
             .expect("Failed to enumerate input devices")
             .filter(|d| {
                 d.name()
@@ -57,56 +168,32 @@ impl CpalMic {
                 host.default_input_device()
                     .and_then(|d| d.default_input_config().ok().map(|c| (d, c)))
             })
-            .expect("No usable audio input device found");
+            .expect("No usable audio input device found")
+    }
 
-        println!("[CpalMic] Using device: {}", device.name().unwrap_or_default());
-        Self {
-            native_rate: config.sample_rate().0,
-        }
+    #[cfg(not(target_os = "linux"))]
+    {
+        host.default_input_device()
+            .and_then(|d| d.default_input_config().ok().map(|c| (d, c)))
+            .expect("No usable audio input device found")
     }
 }
 
-impl MicAbstraction for CpalMic {
-    fn start(self) -> MicHandle {
-        let paused = Arc::new(AtomicBool::new(false));
-        let paused_thread = paused.clone();
-        let (tx, rx) = mpsc::channel::<Vec<f32>>(4);
-
-        std::thread::Builder::new()
-            .name("cpal-capture".into())
-            .spawn(move || capture_thread(tx, paused_thread, self.native_rate))
-            .expect("Failed to spawn audio capture thread");
-
-        MicHandle {
-            rx,
-            native_rate: self.native_rate,
-            paused,
-        }
-    }
-}
-
-fn capture_thread(tx: mpsc::Sender<Vec<f32>>, paused: Arc<AtomicBool>, native_rate: u32) {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+fn capture_thread(
+    tx: mpsc::Sender<Vec<f32>>,
+    paused: Arc<AtomicBool>,
+    native_rate: u32,
+    native_channels: u16,
+) {
+    use cpal::traits::{DeviceTrait, StreamTrait};
 
     let host = cpal::default_host();
-    let (device, supported) = host
-        .input_devices()
-        .expect("Failed to enumerate input devices")
-        .filter(|d| {
-            d.name()
-                .map(|n| n.starts_with("hw:") || n.starts_with("plughw:"))
-                .unwrap_or(false)
-        })
-        .find_map(|d| d.default_input_config().ok().map(|c| (d, c)))
-        .or_else(|| {
-            host.default_input_device()
-                .and_then(|d| d.default_input_config().ok().map(|c| (d, c)))
-        })
-        .expect("No usable audio input device found");
+    let (device, supported) = find_input_device(&host);
     let sample_format = supported.sample_format();
 
+    // Use the device's native channel count; downmix to mono in the callbacks.
     let config = cpal::StreamConfig {
-        channels: 1,
+        channels: native_channels,
         sample_rate: cpal::SampleRate(native_rate),
         buffer_size: cpal::BufferSize::Default,
     };
@@ -114,13 +201,22 @@ fn capture_thread(tx: mpsc::Sender<Vec<f32>>, paused: Arc<AtomicBool>, native_ra
     // Bridge cpal callback (any thread) → std mpsc (VAD loop below).
     let (raw_tx, raw_rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(64);
 
+    // Downmix interleaved multi-channel frames to mono by averaging.
+    let downmix = move |interleaved: &[f32]| -> Vec<f32> {
+        let ch = native_channels as usize;
+        interleaved
+            .chunks(ch)
+            .map(|frame| frame.iter().sum::<f32>() / ch as f32)
+            .collect()
+    };
+
     let stream = match sample_format {
         cpal::SampleFormat::F32 => {
             let raw_tx = raw_tx.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let _ = raw_tx.try_send(data.to_vec());
+                    let _ = raw_tx.try_send(downmix(data));
                 },
                 |e| eprintln!("[cpal] stream error: {e}"),
                 None,
@@ -131,8 +227,8 @@ fn capture_thread(tx: mpsc::Sender<Vec<f32>>, paused: Arc<AtomicBool>, native_ra
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let s: Vec<f32> = data.iter().map(|&s| s as f32 / 32_768.0).collect();
-                    let _ = raw_tx.try_send(s);
+                    let f: Vec<f32> = data.iter().map(|&s| s as f32 / 32_768.0).collect();
+                    let _ = raw_tx.try_send(downmix(&f));
                 },
                 |e| eprintln!("[cpal] stream error: {e}"),
                 None,
@@ -143,9 +239,9 @@ fn capture_thread(tx: mpsc::Sender<Vec<f32>>, paused: Arc<AtomicBool>, native_ra
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    let s: Vec<f32> =
+                    let f: Vec<f32> =
                         data.iter().map(|&s| s as f32 / 65_535.0 * 2.0 - 1.0).collect();
-                    let _ = raw_tx.try_send(s);
+                    let _ = raw_tx.try_send(downmix(&f));
                 },
                 |e| eprintln!("[cpal] stream error: {e}"),
                 None,
@@ -157,12 +253,15 @@ fn capture_thread(tx: mpsc::Sender<Vec<f32>>, paused: Arc<AtomicBool>, native_ra
     drop(raw_tx); // only the closure's clones keep the channel open
 
     stream.play().expect("Failed to start audio stream");
-    println!("[CpalMic] Capturing at {native_rate} Hz");
+    println!(
+        "[CpalMic] Capturing at {native_rate} Hz, {native_channels} ch, format={sample_format:?}"
+    );
 
     // VAD processing loop — runs entirely in this thread.
     let mut buffer: Vec<f32> = Vec::new();
     let mut last_voice: Option<std::time::Instant> = None;
     let mut frame_count = 0u64;
+    let mut zero_frame_count = 0u64;
 
     loop {
         match raw_rx.recv_timeout(std::time::Duration::from_millis(50)) {
@@ -176,6 +275,21 @@ fn capture_thread(tx: mpsc::Sender<Vec<f32>>, paused: Arc<AtomicBool>, native_ra
                 let energy: f32 =
                     samples.iter().map(|s| s.abs()).sum::<f32>() / samples.len() as f32;
                 frame_count += 1;
+
+                // Warn if macOS is returning all-zero samples (mic permission not granted).
+                if energy == 0.0 {
+                    zero_frame_count += 1;
+                    #[cfg(target_os = "macos")]
+                    if zero_frame_count == 50 {
+                        eprintln!(
+                            "[CpalMic] WARNING: microphone is silent. \
+                             If you just granted permission, restart the app. \
+                             Check: System Settings > Privacy & Security > Microphone"
+                        );
+                    }
+                } else {
+                    zero_frame_count = 0;
+                }
 
                 if frame_count % 10 == 0 {
                     println!(
@@ -281,8 +395,4 @@ impl MicAbstraction for MockMic {
 
 // ── Platform type alias ───────────────────────────────────────────────────────
 
-#[cfg(target_os = "linux")]
 pub type Mic = CpalMic;
-
-#[cfg(not(target_os = "linux"))]
-pub type Mic = MockMic;

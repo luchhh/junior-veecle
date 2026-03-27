@@ -28,10 +28,6 @@ impl Speaker {
     /// Build a Speaker from environment variables.
     /// Reads TTS_BACKEND (piper|openai) and OPENAI_API_KEY / PIPER_MODEL.
     pub fn from_env() -> Self {
-        #[cfg(not(target_os = "linux"))]
-        return Self::Mock;
-
-        #[cfg(target_os = "linux")]
         match std::env::var("TTS_BACKEND").as_deref() {
             Ok("openai") => {
                 let api_key =
@@ -39,15 +35,23 @@ impl Speaker {
                 Self::OpenAi {
                     client: reqwest::Client::new(),
                     api_key,
+                    #[cfg(target_os = "linux")]
                     audio_device: get_audio_device(),
+                    #[cfg(not(target_os = "linux"))]
+                    audio_device: 0,
                 }
             }
-            _ => Self::Piper {
-                model_path: std::env::var("PIPER_MODEL").unwrap_or_else(|_| {
-                    "/home/pi/piper-voices/en_US-lessac-medium.onnx".into()
-                }),
-                audio_device: get_audio_device(),
-            },
+            _ => {
+                #[cfg(target_os = "linux")]
+                return Self::Piper {
+                    model_path: std::env::var("PIPER_MODEL").unwrap_or_else(|_| {
+                        "/home/pi/piper-voices/en_US-lessac-medium.onnx".into()
+                    }),
+                    audio_device: get_audio_device(),
+                };
+                #[cfg(not(target_os = "linux"))]
+                Self::Mock
+            }
         }
     }
 
@@ -141,14 +145,18 @@ async fn speak_openai(
 
 // ── Shared playback ───────────────────────────────────────────────────────────
 
-async fn play_wav(path: &str, audio_device: u32) {
-    let status = tokio::process::Command::new("aplay")
-        .args(["-D", &format!("plughw:{audio_device},0"), path])
+async fn play_wav(path: &str, _audio_device: u32) {
+    #[cfg(target_os = "linux")]
+    let cmd = tokio::process::Command::new("aplay")
+        .args(["-D", &format!("plughw:{_audio_device},0"), path])
         .status()
         .await;
 
-    if let Err(e) = status {
-        eprintln!("[Speaker] aplay error: {e}");
+    #[cfg(not(target_os = "linux"))]
+    let cmd = tokio::process::Command::new("afplay").arg(path).status().await;
+
+    if let Err(e) = cmd {
+        eprintln!("[Speaker] playback error: {e}");
     }
 }
 
