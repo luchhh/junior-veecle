@@ -10,6 +10,7 @@ use junior_veecle::actors::{
     llm::LlmActor,
     stt::SttActor,
 };
+use junior_veecle::llm_client::OpenAiClient;
 
 #[veecle_os::osal::std::main(telemetry = true)]
 async fn main() {
@@ -26,8 +27,8 @@ async fn main() {
 
         actors: [
             AudioCaptureActor,
-            SttActor,
-            LlmActor,
+            SttActor<OpenAiClient>: OpenAiClient::from_env(),
+            LlmActor<OpenAiClient>: OpenAiClient::from_env(),
             CommandExecutorActor,
         ],
     }
