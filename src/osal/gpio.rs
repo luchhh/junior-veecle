@@ -5,10 +5,10 @@
 ///   PWM enable: GPIO 12 (motor A), GPIO 13 (motor B) — software PWM at 1 kHz
 ///
 /// Motor direction truth table:
-///   forward:    17=L 22=H 23=L 24=H
-///   reverse:    17=H 22=L 23=H 24=L
-///   left_turn:  17=L 22=H 23=H 24=L
-///   right_turn: 17=H 22=L 23=L 24=H
+///   forward:    17=L 22=H 23=L 24=H  (A fwd,   B fwd)
+///   reverse:    17=H 22=L 23=H 24=L  (A rev,   B rev)
+///   left_turn:  17=L 22=H 23=L 24=L  (A fwd,   B coast) — pivot turn
+///   right_turn: 17=L 22=L 23=L 24=H  (A coast, B fwd)   — pivot turn
 ///   stop:       PWM=0, all LOW
 pub trait GpioAbstraction: Send + 'static {
     fn forward(&mut self, power: f64);
@@ -87,11 +87,11 @@ mod real {
             self.set_pwm(power);
         }
         fn left_turn(&mut self, power: f64) {
-            self.set_direction(false, true, true, false);
+            self.set_direction(false, true, false, false); // A fwd, B coast
             self.set_pwm(power);
         }
         fn right_turn(&mut self, power: f64) {
-            self.set_direction(true, false, false, true);
+            self.set_direction(false, false, false, true); // A coast, B fwd
             self.set_pwm(power);
         }
         fn stop(&mut self) {
