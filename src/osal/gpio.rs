@@ -91,7 +91,7 @@ mod real {
             self.set_pwm(power);
         }
         fn right_turn(&mut self, power: f64) {
-            self.set_direction(false, true, false, true); // DEBUG: A fwd + B fwd (same as forward)
+            self.set_direction(true, false, false, false); // DEBUG: only 17=H (mirror of left_turn's 22=H)
             self.set_pwm(power);
         }
         fn stop(&mut self) {
