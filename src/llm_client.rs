@@ -90,7 +90,7 @@ const TOOLS: &str = r#"[
     "type": "function",
     "function": {
       "name": "happy_dance",
-      "description": "Express happiness by doing a celebratory spin.",
+      "description": "Express happiness or excitement with a celebratory wiggle. Use it spontaneously whenever something good happens, a compliment is given, or the mood calls for it — don't wait to be asked.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -104,7 +104,7 @@ const TOOLS: &str = r#"[
     "type": "function",
     "function": {
       "name": "happy_birthday_giorgio",
-      "description": "Play a special happy birthday tango song for Giorgio.",
+      "description": "Play a special happy birthday tango song for Giorgio. Use it proactively whenever Giorgio's birthday is mentioned or celebrated — don't wait to be explicitly asked.",
       "parameters": {
         "type": "object",
         "properties": {},
