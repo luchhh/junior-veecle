@@ -20,7 +20,7 @@ impl TextPrompt for MockTextPrompt {
 #[test]
 fn llm_actor_forwards_commands_from_client() {
     let mock = MockTextPrompt {
-        commands: vec![RobotCommand::Forward { ms: 1000 }],
+        commands: vec![RobotCommand::Forward { cm: 100.0 }],
     };
 
     veecle_os_test::block_on_future(veecle_os_test::execute! {
@@ -38,7 +38,7 @@ fn llm_actor_forwards_commands_from_client() {
 
             let seq = commands_out.wait_for_update().await.read_cloned().unwrap();
             assert_eq!(seq.commands.len(), 1);
-            assert!(matches!(seq.commands[0], RobotCommand::Forward { ms: 1000 }));
+            assert!(matches!(seq.commands[0], RobotCommand::Forward { cm } if cm == 100.0));
         },
     });
 }
