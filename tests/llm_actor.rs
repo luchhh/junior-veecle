@@ -4,19 +4,24 @@ use junior_veecle::types::{CommandSequence, RobotCommand, TranscribedText};
 use veecle_os::runtime::{Reader, Writer};
 
 struct MockTextPrompt {
-    response: &'static str,
+    commands: Vec<RobotCommand>,
 }
 
 impl TextPrompt for MockTextPrompt {
-    fn ask(&self, _text: &str) -> impl std::future::Future<Output = Result<String, ClientError>> + Send {
-        let response = self.response;
-        async move { Ok(response.to_string()) }
+    fn ask(
+        &self,
+        _text: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<RobotCommand>, ClientError>> + Send {
+        let commands = self.commands.clone();
+        async move { Ok(commands) }
     }
 }
 
 #[test]
-fn llm_actor_parses_commands_from_mock_response() {
-    let mock = MockTextPrompt { response: r#"[{"command": "forward", "ms": 1000}]"# };
+fn llm_actor_forwards_commands_from_client() {
+    let mock = MockTextPrompt {
+        commands: vec![RobotCommand::Forward { ms: 1000 }],
+    };
 
     veecle_os_test::block_on_future(veecle_os_test::execute! {
         store: [TranscribedText, CommandSequence],

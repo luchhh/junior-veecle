@@ -1,11 +1,11 @@
 /// LLM actor (Whisper pipeline).
 ///
-/// Reads transcribed text, asks the AI model to generate commands,
-/// parses the response, and publishes the command sequence to the Store.
+/// Reads transcribed text, asks the AI model to generate commands via tool
+/// calls, and publishes the command sequence to the Store.
 use veecle_os::runtime::{InitializedReader, Writer};
 
 use crate::llm_client::TextPrompt;
-use crate::types::{CommandSequence, RobotCommand, TranscribedText};
+use crate::types::{CommandSequence, TranscribedText};
 
 #[veecle_os::runtime::actor]
 pub async fn llm_actor<C: TextPrompt + 'static>(
@@ -18,22 +18,15 @@ pub async fn llm_actor<C: TextPrompt + 'static>(
         veecle_os::telemetry::info!("LLM: sending text", text = format!("{}", input.text));
 
         match client.ask(&input.text).await {
-            Ok(raw) => match RobotCommand::parse_many(&raw) {
-                Ok(commands) => {
-                    veecle_os::telemetry::info!(
-                        "LLM: commands parsed",
-                        count = format!("{}", commands.len())
-                    );
-                    commands_out
-                        .write(CommandSequence { commands, seq: input.seq })
-                        .await;
-                }
-                Err(e) => veecle_os::telemetry::error!(
-                    "LLM: parse error",
-                    error = format!("{e}"),
-                    content = format!("{raw}")
-                ),
-            },
+            Ok(commands) => {
+                veecle_os::telemetry::info!(
+                    "LLM: commands received",
+                    count = format!("{}", commands.len())
+                );
+                commands_out
+                    .write(CommandSequence { commands, seq: input.seq })
+                    .await;
+            }
             Err(e) => veecle_os::telemetry::error!("LLM: request error", error = format!("{e}")),
         }
     }

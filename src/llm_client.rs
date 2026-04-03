@@ -1,20 +1,108 @@
+use crate::types::RobotCommand;
+
 pub type ClientError = Box<dyn std::error::Error + Send + Sync>;
 
 const SYSTEM_PROMPT: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/system.md"));
 
-/// Ask an AI model something using raw audio as input, returns the raw text response.
+const TOOLS: &str = r#"[
+  {
+    "type": "function",
+    "function": {
+      "name": "speak",
+      "description": "Say something out loud.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "body": { "type": "string", "description": "Text to say." }
+        },
+        "required": ["body"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "forward",
+      "description": "Move forward for a given duration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ms": { "type": "integer", "description": "Duration in milliseconds." }
+        },
+        "required": ["ms"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "backward",
+      "description": "Move backward for a given duration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ms": { "type": "integer", "description": "Duration in milliseconds." }
+        },
+        "required": ["ms"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "left",
+      "description": "Spin left (counterclockwise) for a given duration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ms": { "type": "integer", "description": "Duration in milliseconds." }
+        },
+        "required": ["ms"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "right",
+      "description": "Spin right (clockwise) for a given duration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ms": { "type": "integer", "description": "Duration in milliseconds." }
+        },
+        "required": ["ms"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  }
+]"#;
+
+/// Ask an AI model something using raw audio as input, returns parsed commands.
 pub trait AudioPrompt: Send + Sync {
     fn ask(
         &self,
         samples: &[f32],
         sample_rate: u32,
-    ) -> impl std::future::Future<Output = Result<String, ClientError>> + Send;
+    ) -> impl std::future::Future<Output = Result<Vec<RobotCommand>, ClientError>> + Send;
 }
 
-/// Ask an AI model something using text as input, returns the raw text response.
+/// Ask an AI model something using text as input, returns parsed commands.
 pub trait TextPrompt: Send + Sync {
-    fn ask(&self, text: &str) -> impl std::future::Future<Output = Result<String, ClientError>> + Send;
+    fn ask(
+        &self,
+        text: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<RobotCommand>, ClientError>> + Send;
 }
 
 /// Transcribe raw audio into text.
@@ -40,7 +128,10 @@ impl OpenAiClient {
         }
     }
 
-    async fn chat_completion(&self, body: serde_json::Value) -> Result<String, ClientError> {
+    async fn chat_completion(
+        &self,
+        body: serde_json::Value,
+    ) -> Result<Vec<RobotCommand>, ClientError> {
         let json = self
             .client
             .post("https://api.openai.com/v1/chat/completions")
@@ -51,20 +142,36 @@ impl OpenAiClient {
             .json::<serde_json::Value>()
             .await?;
 
-        Ok(json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .trim()
-            .to_string())
+        let tool_calls = json["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .ok_or("no tool_calls in response")?;
+
+        let commands = tool_calls
+            .iter()
+            .map(|tc| {
+                let name = tc["function"]["name"].as_str().unwrap_or("");
+                let args = tc["function"]["arguments"].as_str().unwrap_or("{}");
+                RobotCommand::from_tool_call(name, args)
+                    .map_err(|e| Box::new(e) as ClientError)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(commands)
     }
 }
 
 impl AudioPrompt for OpenAiClient {
-    async fn ask(&self, samples: &[f32], sample_rate: u32) -> Result<String, ClientError> {
+    async fn ask(
+        &self,
+        samples: &[f32],
+        sample_rate: u32,
+    ) -> Result<Vec<RobotCommand>, ClientError> {
         use base64::Engine as _;
 
         let audio_b64 =
             base64::engine::general_purpose::STANDARD.encode(encode_wav(samples, sample_rate));
+
+        let tools: serde_json::Value = serde_json::from_str(TOOLS).unwrap();
 
         self.chat_completion(serde_json::json!({
             "model": "gpt-4o-audio-preview",
@@ -78,6 +185,8 @@ impl AudioPrompt for OpenAiClient {
                     }],
                 },
             ],
+            "tools": tools,
+            "tool_choice": "required",
             "temperature": 0.7,
         }))
         .await
@@ -85,13 +194,17 @@ impl AudioPrompt for OpenAiClient {
 }
 
 impl TextPrompt for OpenAiClient {
-    async fn ask(&self, text: &str) -> Result<String, ClientError> {
+    async fn ask(&self, text: &str) -> Result<Vec<RobotCommand>, ClientError> {
+        let tools: serde_json::Value = serde_json::from_str(TOOLS).unwrap();
+
         self.chat_completion(serde_json::json!({
             "model": "gpt-4o-mini",
             "messages": [
                 { "role": "system", "content": SYSTEM_PROMPT },
                 { "role": "user", "content": text },
             ],
+            "tools": tools,
+            "tool_choice": "required",
             "temperature": 0.7,
         }))
         .await
