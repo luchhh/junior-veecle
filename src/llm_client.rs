@@ -99,6 +99,20 @@ const TOOLS: &str = r#"[
       },
       "strict": true
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "happy_birthday_giorgio",
+      "description": "Play a special happy birthday tango song for Giorgio.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
   }
 ]"#;
 

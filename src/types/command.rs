@@ -19,6 +19,8 @@ pub enum RobotCommand {
     Right { deg: f64 },
     #[serde(rename = "happy_dance")]
     HappyDance,
+    #[serde(rename = "happy_birthday_giorgio")]
+    HappyBirthdayGiorgio,
 }
 
 impl RobotCommand {
