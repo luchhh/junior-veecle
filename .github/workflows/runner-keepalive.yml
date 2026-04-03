@@ -1,0 +1,13 @@
+name: Runner keep-alive
+
+on:
+  schedule:
+    - cron: '0 9 */10 * *'  # every 10 days at 09:00 UTC
+  workflow_dispatch:         # allow manual trigger
+
+jobs:
+  keepalive:
+    runs-on: [self-hosted, arm64]
+    steps:
+      - name: Keep runner registration alive
+        run: echo "keep-alive ping — runner is healthy"
