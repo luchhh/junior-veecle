@@ -2,8 +2,10 @@
 ///
 /// Reads a CommandSequence from the Store, cancels any in-progress movement,
 /// then executes each command in order:
-///   speak   → pauses mic capture, plays TTS, resumes capture
-///   forward / backward / left / right → drives motors for the given duration
+///   speak                        → pauses mic capture, plays TTS, resumes capture
+///   forward / backward           → drives both motors for the given duration
+///   left_forward / right_forward → pivots one motor, other coasts, moving forward
+///   left_backward / right_backward → pivots one motor, other coasts, moving backward
 ///
 /// Uses GpioAbstraction and Speaker so the actor is fully hardware-agnostic.
 use std::time::Duration;
@@ -58,15 +60,27 @@ pub async fn command_executor_actor(
                     tokio::time::sleep(Duration::from_millis(ms)).await;
                     gpio.stop();
                 }
-                RobotCommand::Left { ms } => {
-                    veecle_os::telemetry::info!("left", ms = format!("{ms}"));
-                    gpio.left_turn(100.0);
+                RobotCommand::LeftForward { ms } => {
+                    veecle_os::telemetry::info!("left_forward", ms = format!("{ms}"));
+                    gpio.left_forward(100.0);
                     tokio::time::sleep(Duration::from_millis(ms)).await;
                     gpio.stop();
                 }
-                RobotCommand::Right { ms } => {
-                    veecle_os::telemetry::info!("right", ms = format!("{ms}"));
-                    gpio.right_turn(100.0);
+                RobotCommand::RightForward { ms } => {
+                    veecle_os::telemetry::info!("right_forward", ms = format!("{ms}"));
+                    gpio.right_forward(100.0);
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    gpio.stop();
+                }
+                RobotCommand::LeftBackward { ms } => {
+                    veecle_os::telemetry::info!("left_backward", ms = format!("{ms}"));
+                    gpio.left_backward(100.0);
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    gpio.stop();
+                }
+                RobotCommand::RightBackward { ms } => {
+                    veecle_os::telemetry::info!("right_backward", ms = format!("{ms}"));
+                    gpio.right_backward(100.0);
                     tokio::time::sleep(Duration::from_millis(ms)).await;
                     gpio.stop();
                 }
