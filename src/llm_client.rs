@@ -26,13 +26,13 @@ const TOOLS: &str = r#"[
     "type": "function",
     "function": {
       "name": "forward",
-      "description": "Move forward for a given duration.",
+      "description": "Move forward a given distance.",
       "parameters": {
         "type": "object",
         "properties": {
-          "ms": { "type": "integer", "description": "Duration in milliseconds." }
+          "cm": { "type": "number", "description": "Distance in centimeters." }
         },
-        "required": ["ms"],
+        "required": ["cm"],
         "additionalProperties": false
       },
       "strict": true
@@ -42,13 +42,13 @@ const TOOLS: &str = r#"[
     "type": "function",
     "function": {
       "name": "backward",
-      "description": "Move backward for a given duration.",
+      "description": "Move backward a given distance.",
       "parameters": {
         "type": "object",
         "properties": {
-          "ms": { "type": "integer", "description": "Duration in milliseconds." }
+          "cm": { "type": "number", "description": "Distance in centimeters." }
         },
-        "required": ["ms"],
+        "required": ["cm"],
         "additionalProperties": false
       },
       "strict": true
@@ -58,13 +58,13 @@ const TOOLS: &str = r#"[
     "type": "function",
     "function": {
       "name": "left",
-      "description": "Spin left (counterclockwise) for a given duration.",
+      "description": "Spin left (counterclockwise) by a given angle.",
       "parameters": {
         "type": "object",
         "properties": {
-          "ms": { "type": "integer", "description": "Duration in milliseconds." }
+          "deg": { "type": "number", "description": "Angle in degrees." }
         },
-        "required": ["ms"],
+        "required": ["deg"],
         "additionalProperties": false
       },
       "strict": true
@@ -74,13 +74,13 @@ const TOOLS: &str = r#"[
     "type": "function",
     "function": {
       "name": "right",
-      "description": "Spin right (clockwise) for a given duration.",
+      "description": "Spin right (clockwise) by a given angle.",
       "parameters": {
         "type": "object",
         "properties": {
-          "ms": { "type": "integer", "description": "Duration in milliseconds." }
+          "deg": { "type": "number", "description": "Angle in degrees." }
         },
-        "required": ["ms"],
+        "required": ["deg"],
         "additionalProperties": false
       },
       "strict": true
