@@ -86,13 +86,23 @@ echo ""
 
 # Add cargo to PATH in runner environment so it's available in non-interactive shells
 RUNNER_ENV="$HOME/actions-runner/.env"
+RUNNER_SVC="actions.runner.luchhh-junior-veecle.$(hostname).service"
 if [ -f "$RUNNER_ENV" ] && ! grep -q "cargo" "$RUNNER_ENV"; then
     echo "==> Adding cargo to GitHub Actions runner PATH..."
     echo "PATH=$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> "$RUNNER_ENV"
-    sudo systemctl restart "actions.runner.luchhh-junior-veecle.$(hostname).service" || true
+    sudo systemctl restart "$RUNNER_SVC" || true
 elif [ ! -f "$RUNNER_ENV" ]; then
     echo "==> Runner not installed yet — remember to add cargo to PATH after setup:"
     echo "    echo 'PATH=$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' >> ~/actions-runner/.env"
+fi
+
+# Patch runner service to restart automatically when the GitHub session expires
+RUNNER_SVC_FILE="/etc/systemd/system/$RUNNER_SVC"
+if [ -f "$RUNNER_SVC_FILE" ] && ! grep -q "Restart=always" "$RUNNER_SVC_FILE"; then
+    echo "==> Patching runner service with Restart=always..."
+    sudo sed -i '/TimeoutStopSec=5min/a Restart=always\nRestartSec=30' "$RUNNER_SVC_FILE"
+    sudo systemctl daemon-reload
+    sudo systemctl restart "$RUNNER_SVC" || true
 fi
 
 # --- Done ---
