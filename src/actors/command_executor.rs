@@ -84,6 +84,12 @@ pub async fn command_executor_actor(
                     tokio::time::sleep(deg_to_duration(deg)).await;
                     gpio.stop();
                 }
+                RobotCommand::HappyDance => {
+                    veecle_os::telemetry::info!("happy_dance");
+                    gpio.left_turn(100.0);
+                    tokio::time::sleep(deg_to_duration(360.0)).await;
+                    gpio.stop();
+                }
             }
         }
     }

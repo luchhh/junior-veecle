@@ -85,6 +85,20 @@ const TOOLS: &str = r#"[
       },
       "strict": true
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "happy_dance",
+      "description": "Express happiness by doing a celebratory spin.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
   }
 ]"#;
 

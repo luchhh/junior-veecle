@@ -17,6 +17,8 @@ pub enum RobotCommand {
     Backward { cm: f64 },
     Left { deg: f64 },
     Right { deg: f64 },
+    #[serde(rename = "happy_dance")]
+    HappyDance,
 }
 
 impl RobotCommand {
