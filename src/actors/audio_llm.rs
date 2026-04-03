@@ -1,11 +1,11 @@
 /// Combined STT + LLM actor (Audio pipeline).
 ///
-/// Reads a raw AudioChunk, asks the AI model to interpret it directly,
-/// parses the response into a command sequence, and publishes it to the Store.
+/// Reads a raw AudioChunk, asks the AI model to interpret it directly via
+/// tool calls, and publishes the command sequence to the Store.
 use veecle_os::runtime::{InitializedReader, Writer};
 
 use crate::llm_client::AudioPrompt;
-use crate::types::{AudioChunk, CommandSequence, RobotCommand};
+use crate::types::{AudioChunk, CommandSequence};
 
 #[veecle_os::runtime::actor]
 pub async fn audio_llm_actor<C: AudioPrompt + 'static>(
@@ -21,23 +21,18 @@ pub async fn audio_llm_actor<C: AudioPrompt + 'static>(
         );
 
         match client.ask(&chunk.samples, chunk.sample_rate).await {
-            Ok(raw) => match RobotCommand::parse_many(&raw) {
-                Ok(commands) => {
-                    veecle_os::telemetry::info!(
-                        "AudioLLM: commands parsed",
-                        count = format!("{}", commands.len())
-                    );
-                    commands_out
-                        .write(CommandSequence { commands, seq: chunk.seq })
-                        .await;
-                }
-                Err(e) => veecle_os::telemetry::error!(
-                    "AudioLLM: parse error",
-                    error = format!("{e}"),
-                    content = format!("{raw}")
-                ),
-            },
-            Err(e) => veecle_os::telemetry::error!("AudioLLM: request error", error = format!("{e}")),
+            Ok(commands) => {
+                veecle_os::telemetry::info!(
+                    "AudioLLM: commands received",
+                    count = format!("{}", commands.len())
+                );
+                commands_out
+                    .write(CommandSequence { commands, seq: chunk.seq })
+                    .await;
+            }
+            Err(e) => {
+                veecle_os::telemetry::error!("AudioLLM: request error", error = format!("{e}"))
+            }
         }
     }
 }
