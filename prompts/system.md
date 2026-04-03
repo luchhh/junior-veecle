@@ -27,25 +27,25 @@ Allowed commands:
   "ms":  <positive integer milliseconds>
 }
 
-4) Pivot left while going forward (right motor drives, left motor coasts)
+4) Turn left (pivot: right motor drives forward, left motor coasts)
 {
   "command": "left_forward",
   "ms":  <positive integer milliseconds>
 }
 
-5) Pivot right while going forward (left motor drives, right motor coasts)
+5) Turn right (pivot: left motor drives forward, right motor coasts)
 {
   "command": "right_forward",
   "ms":  <positive integer milliseconds>
 }
 
-6) Pivot left while going backward (right motor drives, left motor coasts)
+6) Turn left while reversing (pivot: right motor drives backward, left motor coasts)
 {
   "command": "left_backward",
   "ms":  <positive integer milliseconds>
 }
 
-7) Pivot right while going backward (left motor drives, right motor coasts)
+7) Turn right while reversing (pivot: left motor drives backward, right motor coasts)
 {
   "command": "right_backward",
   "ms":  <positive integer milliseconds>

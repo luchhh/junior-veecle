@@ -71,11 +71,20 @@ mod real {
         }
 
         fn set_pwm(&mut self, duty: f64) {
-            if duty > 0.0 {
-                let _ = self.pwm_a.set_pwm_frequency(PWM_FREQ, duty / 100.0);
-                let _ = self.pwm_b.set_pwm_frequency(PWM_FREQ, duty / 100.0);
+            self.set_pwm_split(duty, duty);
+        }
+
+        /// Set Motor A and Motor B enable independently.
+        /// Passing 0.0 disables the enable pin (true coast / high impedance).
+        fn set_pwm_split(&mut self, duty_a: f64, duty_b: f64) {
+            if duty_a > 0.0 {
+                let _ = self.pwm_a.set_pwm_frequency(PWM_FREQ, duty_a.clamp(0.0, 100.0) / 100.0);
             } else {
                 let _ = self.pwm_a.clear_pwm();
+            }
+            if duty_b > 0.0 {
+                let _ = self.pwm_b.set_pwm_frequency(PWM_FREQ, duty_b.clamp(0.0, 100.0) / 100.0);
+            } else {
                 let _ = self.pwm_b.clear_pwm();
             }
         }
@@ -91,20 +100,24 @@ mod real {
             self.set_pwm(power);
         }
         fn left_forward(&mut self, power: f64) {
+            // Motor A (right) drives, Motor B (left) truly coasts — ENB disabled.
             self.set_direction(false, true, false, false);
-            self.set_pwm(power);
+            self.set_pwm_split(power, 0.0);
         }
         fn right_forward(&mut self, power: f64) {
+            // Motor B (left) drives, Motor A (right) truly coasts — ENA disabled.
             self.set_direction(false, false, false, true);
-            self.set_pwm(power);
+            self.set_pwm_split(0.0, power);
         }
         fn left_backward(&mut self, power: f64) {
+            // Motor A (right) drives backward, Motor B (left) truly coasts.
             self.set_direction(true, false, false, false);
-            self.set_pwm(power);
+            self.set_pwm_split(power, 0.0);
         }
         fn right_backward(&mut self, power: f64) {
+            // Motor B (left) drives backward, Motor A (right) truly coasts.
             self.set_direction(false, false, true, false);
-            self.set_pwm(power);
+            self.set_pwm_split(0.0, power);
         }
         fn stop(&mut self) {
             self.set_pwm(0.0);
