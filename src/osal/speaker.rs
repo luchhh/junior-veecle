@@ -55,6 +55,16 @@ impl Speaker {
         }
     }
 
+    pub async fn play_wav_file(&self, path: &str) {
+        println!("[Speaker] Playing: {path}");
+        let device = match self {
+            Self::Piper { audio_device, .. } => *audio_device,
+            Self::OpenAi { audio_device, .. } => *audio_device,
+            Self::Mock => 0,
+        };
+        play_wav(path, device).await;
+    }
+
     pub async fn speak(&self, text: &str) {
         if text.trim().is_empty() {
             return;

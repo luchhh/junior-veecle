@@ -96,6 +96,12 @@ pub async fn command_executor_actor(
                     }
                     gpio.stop();
                 }
+                RobotCommand::HappyBirthdayGiorgio => {
+                    veecle_os::telemetry::info!("happy_birthday_giorgio");
+                    capture_state_out.write(CaptureState { paused: true }).await;
+                    speaker.play_wav_file("assets/happy-birthday-giorgio.wav").await;
+                    capture_state_out.write(CaptureState { paused: false }).await;
+                }
             }
         }
     }
