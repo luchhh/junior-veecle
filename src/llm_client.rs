@@ -26,13 +26,13 @@ const TOOLS: &str = r#"[
     "type": "function",
     "function": {
       "name": "forward",
-      "description": "Move forward a given distance.",
+      "description": "Move forward for a given duration.",
       "parameters": {
         "type": "object",
         "properties": {
-          "cm": { "type": "number", "description": "Distance in centimeters." }
+          "secs": { "type": "number", "description": "Duration in seconds." }
         },
-        "required": ["cm"],
+        "required": ["secs"],
         "additionalProperties": false
       },
       "strict": true
@@ -42,13 +42,13 @@ const TOOLS: &str = r#"[
     "type": "function",
     "function": {
       "name": "backward",
-      "description": "Move backward a given distance.",
+      "description": "Move backward for a given duration.",
       "parameters": {
         "type": "object",
         "properties": {
-          "cm": { "type": "number", "description": "Distance in centimeters." }
+          "secs": { "type": "number", "description": "Duration in seconds." }
         },
-        "required": ["cm"],
+        "required": ["secs"],
         "additionalProperties": false
       },
       "strict": true

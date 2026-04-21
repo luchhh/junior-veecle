@@ -13,8 +13,8 @@ pub struct CommandSequence {
 #[serde(tag = "command", rename_all = "lowercase")]
 pub enum RobotCommand {
     Speak { body: String },
-    Forward { cm: f64 },
-    Backward { cm: f64 },
+    Forward { secs: f64 },
+    Backward { secs: f64 },
     Left { deg: f64 },
     Right { deg: f64 },
     #[serde(rename = "happy_dance")]

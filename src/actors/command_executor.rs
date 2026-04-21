@@ -3,11 +3,10 @@
 /// Reads a CommandSequence from the Store, cancels any in-progress movement,
 /// then executes each command in order:
 ///   speak   → pauses mic capture, plays TTS, resumes capture
-///   forward / backward → drives motors for the given distance in cm
+///   forward / backward → drives motors for the given duration in seconds
 ///   left / right       → spins motors for the given angle in degrees
 ///
 /// Speed constants (from physical measurements):
-///   LINEAR_SPEED_CM_PER_S  = 10.0 cm/s
 ///   ROTATION_DEG_PER_S     = 30.0 deg/s
 use std::time::Duration;
 
@@ -17,12 +16,7 @@ use crate::osal::gpio::{Gpio, GpioAbstraction as _};
 use crate::osal::speaker::Speaker;
 use crate::types::{CaptureState, CommandSequence, RobotCommand};
 
-const LINEAR_SPEED_CM_PER_S: f64 = 10.0;
 const ROTATION_DEG_PER_S: f64 = 30.0;
-
-fn cm_to_duration(cm: f64) -> Duration {
-    Duration::from_secs_f64(cm / LINEAR_SPEED_CM_PER_S)
-}
 
 fn deg_to_duration(deg: f64) -> Duration {
     Duration::from_secs_f64(deg / ROTATION_DEG_PER_S)
@@ -60,16 +54,16 @@ pub async fn command_executor_actor(
                         .write(CaptureState { paused: false })
                         .await;
                 }
-                RobotCommand::Forward { cm } => {
-                    veecle_os::telemetry::info!("forward", cm = format!("{cm}"));
+                RobotCommand::Forward { secs } => {
+                    veecle_os::telemetry::info!("forward", secs = format!("{secs}"));
                     gpio.forward(100.0);
-                    tokio::time::sleep(cm_to_duration(cm)).await;
+                    tokio::time::sleep(Duration::from_secs_f64(secs)).await;
                     gpio.stop();
                 }
-                RobotCommand::Backward { cm } => {
-                    veecle_os::telemetry::info!("backward", cm = format!("{cm}"));
+                RobotCommand::Backward { secs } => {
+                    veecle_os::telemetry::info!("backward", secs = format!("{secs}"));
                     gpio.reverse(100.0);
-                    tokio::time::sleep(cm_to_duration(cm)).await;
+                    tokio::time::sleep(Duration::from_secs_f64(secs)).await;
                     gpio.stop();
                 }
                 RobotCommand::Left { deg } => {
@@ -88,11 +82,11 @@ pub async fn command_executor_actor(
                     veecle_os::telemetry::info!("happy_dance");
                     for _ in 0..2 {
                         gpio.reverse(100.0);
-                        tokio::time::sleep(cm_to_duration(10.0)).await;
+                        tokio::time::sleep(Duration::from_secs_f64(1.0)).await;
                         gpio.reverse(100.0);
-                        tokio::time::sleep(cm_to_duration(10.0)).await;
+                        tokio::time::sleep(Duration::from_secs_f64(1.0)).await;
                         gpio.forward(100.0);
-                        tokio::time::sleep(cm_to_duration(20.0)).await;
+                        tokio::time::sleep(Duration::from_secs_f64(2.0)).await;
                     }
                     gpio.stop();
                 }
