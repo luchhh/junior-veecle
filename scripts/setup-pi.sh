@@ -105,6 +105,32 @@ if [ -f "$RUNNER_SVC_FILE" ] && ! grep -q "Restart=always" "$RUNNER_SVC_FILE"; t
     sudo systemctl restart "$RUNNER_SVC" || true
 fi
 
+# --- WiFi watchdog ---
+echo "==> Installing WiFi watchdog..."
+sudo tee /usr/local/bin/wifi-watchdog.sh > /dev/null << 'WATCHDOG'
+#!/bin/bash
+
+bounce() {
+    /sbin/ip link set wlan0 down
+    sleep 2
+    /sbin/ip link set wlan0 up
+}
+
+# No IP — not connected to anything
+if ! /sbin/ip addr show wlan0 | grep -q 'inet '; then
+    bounce
+    exit 0
+fi
+
+# Has IP but no internet
+if ! ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
+    bounce
+fi
+WATCHDOG
+
+sudo chmod +x /usr/local/bin/wifi-watchdog.sh
+(sudo crontab -l 2>/dev/null | grep -v wifi-watchdog; echo '* * * * * /usr/local/bin/wifi-watchdog.sh') | sudo crontab -
+
 # --- Done ---
 echo "==> Done. Start Junior with: sudo systemctl start junior"
 echo "    Watch logs with:          journalctl -u junior -f"
