@@ -131,6 +131,42 @@ WATCHDOG
 sudo chmod +x /usr/local/bin/wifi-watchdog.sh
 (sudo crontab -l 2>/dev/null | grep -v wifi-watchdog; echo '* * * * * /usr/local/bin/wifi-watchdog.sh') | sudo crontab -
 
+# --- Tailscale ---
+if ! command -v tailscale &>/dev/null; then
+    echo "==> Installing Tailscale..."
+    curl -fsSL https://tailscale.com/install.sh | sh
+    echo ""
+    echo "==> Authenticate Tailscale by running: sudo tailscale up"
+    echo "    Then install Tailscale on your phone and log in with the same account."
+    echo "    The Pi will be reachable at http://juniorpi:5000 from any device on your Tailscale network."
+    echo ""
+else
+    echo "==> Tailscale already installed: $(tailscale version)"
+fi
+
+# --- Mic volume server ---
+echo "==> Installing mic volume server..."
+sudo apt-get install -y python3-flask > /dev/null
+sudo cp "$REPO_DIR/scripts/mic-volume-server.py" /usr/local/bin/mic-volume-server.py
+sudo tee /etc/systemd/system/mic-volume.service > /dev/null << EOF
+[Unit]
+Description=Junior Mic Volume Control
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/mic-volume-server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable mic-volume
+sudo systemctl start mic-volume
+
 # --- Done ---
 echo "==> Done. Start Junior with: sudo systemctl start junior"
 echo "    Watch logs with:          journalctl -u junior -f"
+echo "    Mic volume UI:            http://juniorpi:5000  (requires Tailscale)"
