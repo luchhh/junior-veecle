@@ -172,7 +172,10 @@ impl OpenAiClient {
 
         let tool_calls = json["choices"][0]["message"]["tool_calls"]
             .as_array()
-            .ok_or("no tool_calls in response")?;
+            .ok_or_else(|| {
+                eprintln!("[AudioLLM] unexpected response: {json}");
+                "no tool_calls in response"
+            })?;
 
         let commands = tool_calls
             .iter()
@@ -202,7 +205,7 @@ impl AudioPrompt for OpenAiClient {
         let tools: serde_json::Value = serde_json::from_str(TOOLS).unwrap();
 
         self.chat_completion(serde_json::json!({
-            "model": "gpt-4o-audio-preview",
+            "model": "gpt-audio",
             "messages": [
                 { "role": "system", "content": SYSTEM_PROMPT },
                 {
