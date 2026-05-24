@@ -15,6 +15,7 @@ pub async fn audio_llm_actor<C: AudioPrompt + 'static>(
 ) -> std::convert::Infallible {
     loop {
         let chunk = audio_in.wait_for_update().await.read_cloned();
+        println!("[AudioLLM] processing chunk seq={} samples={}", chunk.seq, chunk.samples.len());
         veecle_os::telemetry::info!(
             "AudioLLM: processing chunk",
             seq = format!("{}", chunk.seq)
@@ -31,6 +32,7 @@ pub async fn audio_llm_actor<C: AudioPrompt + 'static>(
                     .await;
             }
             Err(e) => {
+                eprintln!("[AudioLLM] error: {e}");
                 veecle_os::telemetry::error!("AudioLLM: request error", error = format!("{e}"))
             }
         }
