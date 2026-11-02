@@ -179,7 +179,33 @@ sudo systemctl daemon-reload
 sudo systemctl enable mic-volume
 sudo systemctl start mic-volume
 
+# --- mem0 memory server ---
+echo "==> Installing mem0 memory server..."
+pip3 install --quiet --break-system-packages mem0ai fastapi uvicorn 2>/dev/null \
+    || pip3 install --quiet mem0ai fastapi uvicorn
+sudo cp "$REPO_DIR/scripts/mem0-server.py" /usr/local/bin/mem0-server.py
+sudo tee /etc/systemd/system/junior-mem0.service > /dev/null << EOF
+[Unit]
+Description=Junior mem0 Memory Server
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+EnvironmentFile=$REPO_DIR/.env
+ExecStart=/usr/bin/python3 /usr/local/bin/mem0-server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable junior-mem0
+sudo systemctl start junior-mem0
+
 # --- Done ---
 echo "==> Done. Start Junior with: sudo systemctl start junior"
 echo "    Watch logs with:          journalctl -u junior -f"
 echo "    Mic volume UI:            http://juniorpi:5000  (requires Tailscale)"
+echo "    mem0 memories:            curl http://localhost:8000/v1/memories/?user_id=junior"

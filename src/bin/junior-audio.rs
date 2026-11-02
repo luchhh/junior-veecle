@@ -12,7 +12,7 @@ use junior_veecle::actors::{
     command_executor::CommandExecutorActor,
     display::DisplayActor,
 };
-use junior_veecle::llm_client::OpenAiClient;
+use junior_veecle::llm_client::{Mem0Client, MemoryAwareClient, OpenAiClient};
 
 #[veecle_os::osal::std::main(telemetry = false)]
 async fn main() {
@@ -31,7 +31,10 @@ async fn main() {
 
         actors: [
             AudioCaptureActor,
-            AudioLlmActor<OpenAiClient>: OpenAiClient::from_env(),
+            AudioLlmActor<MemoryAwareClient<OpenAiClient, Mem0Client>>: MemoryAwareClient {
+                audio: OpenAiClient::from_env(),
+                memory: Mem0Client::from_env(),
+            },
             CommandExecutorActor,
             DisplayActor,
         ],
