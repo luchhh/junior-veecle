@@ -5,6 +5,7 @@
 ///   speak   → pauses mic capture, plays TTS, resumes capture
 ///   forward / backward → drives motors for the given duration in seconds
 ///   left / right       → spins motors for the given angle in degrees
+///   set_emotion        → publishes an EmotionCue for the LED face
 ///
 /// Speed constants (from physical measurements):
 ///   ROTATION_DEG_PER_S     = 30.0 deg/s
@@ -14,7 +15,7 @@ use veecle_os::runtime::{InitializedReader, Writer};
 
 use crate::osal::gpio::{Gpio, GpioAbstraction as _};
 use crate::osal::speaker::Speaker;
-use crate::types::{CaptureState, CommandSequence, RobotCommand};
+use crate::types::{CaptureState, CommandSequence, EmotionCue, RobotCommand};
 
 const ROTATION_DEG_PER_S: f64 = 30.0;
 
@@ -26,9 +27,11 @@ fn deg_to_duration(deg: f64) -> Duration {
 pub async fn command_executor_actor(
     mut commands_in: InitializedReader<'_, CommandSequence>,
     mut capture_state_out: Writer<'_, CaptureState>,
+    mut emotion_out: Writer<'_, EmotionCue>,
 ) -> std::convert::Infallible {
     let mut gpio = Gpio::new();
     let speaker = Speaker::from_env();
+    let mut emotion_seq = 0u64;
 
     loop {
         let sequence = commands_in.wait_for_update().await.read_cloned();
@@ -95,6 +98,13 @@ pub async fn command_executor_actor(
                     capture_state_out.write(CaptureState { paused: true }).await;
                     speaker.play_wav_file("assets/happy-birthday-giorgio.wav").await;
                     capture_state_out.write(CaptureState { paused: false }).await;
+                }
+                RobotCommand::SetEmotion { emotion } => {
+                    veecle_os::telemetry::info!("set_emotion", emotion = emotion.as_str());
+                    emotion_seq += 1;
+                    emotion_out
+                        .write(EmotionCue { emotion: Some(emotion), seq: emotion_seq })
+                        .await;
                 }
             }
         }

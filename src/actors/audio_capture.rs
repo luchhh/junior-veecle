@@ -3,22 +3,26 @@
 /// Owns a MicHandle (spawned in the OSAL mic layer) and relays processed
 /// speech segments to the AudioChunk Store slot.
 /// Syncs the pause flag from CaptureState on every iteration so the capture
-/// thread discards audio while the robot is speaking.
+/// thread discards audio while the robot is speaking, and publishes the VAD's
+/// voice-activity flag to VoiceActivity for the LED face.
 use std::sync::atomic::Ordering;
 
 use veecle_os::runtime::{Reader, Writer};
 
 use crate::osal::mic::{Mic, MicAbstraction as _};
-use crate::types::{AudioChunk, CaptureState};
+use crate::types::{AudioChunk, CaptureState, VoiceActivity};
 
 #[veecle_os::runtime::actor]
 pub async fn audio_capture_actor(
     mut audio_out: Writer<'_, AudioChunk>,
+    mut voice_out: Writer<'_, VoiceActivity>,
     capture_state: Reader<'_, CaptureState>,
 ) -> std::convert::Infallible {
     let handle = Mic::new().start();
     let mut rx = handle.rx;
     let paused_flag = handle.paused;
+    let voice_flag = handle.voice_active;
+    let mut voice_active = false;
 
     let mut seq = 0u64;
 
@@ -27,6 +31,12 @@ pub async fn audio_capture_actor(
         let is_paused =
             capture_state.read(|s: Option<&CaptureState>| s.map(|s| s.paused).unwrap_or(false));
         paused_flag.store(is_paused, Ordering::Relaxed);
+
+        let is_voice = voice_flag.load(Ordering::Relaxed);
+        if is_voice != voice_active {
+            voice_active = is_voice;
+            voice_out.write(VoiceActivity { active: is_voice }).await;
+        }
 
         // Wait up to 100 ms for an audio chunk, then loop to refresh pause state.
         match tokio::time::timeout(

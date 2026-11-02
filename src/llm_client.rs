@@ -113,6 +113,26 @@ const TOOLS: &str = r#"[
       },
       "strict": true
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "set_emotion",
+      "description": "Show an emotion on your LED face for a few seconds. Use it often and spontaneously to react to the conversation, usually as the first tool call: happy for good news or compliments, sad for bad news, surprised for unexpected things, angry when insulted, love for affection.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "emotion": {
+            "type": "string",
+            "enum": ["happy", "sad", "surprised", "angry", "love"],
+            "description": "Emotion to show."
+          }
+        },
+        "required": ["emotion"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
   }
 ]"#;
 

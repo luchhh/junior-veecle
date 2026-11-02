@@ -1,3 +1,4 @@
+use junior_protocol::Emotion;
 use serde::{Deserialize, Serialize};
 use veecle_os::runtime::Storable;
 
@@ -21,6 +22,8 @@ pub enum RobotCommand {
     HappyDance,
     #[serde(rename = "happy_birthday_giorgio")]
     HappyBirthdayGiorgio,
+    #[serde(rename = "set_emotion")]
+    SetEmotion { emotion: Emotion },
 }
 
 impl RobotCommand {

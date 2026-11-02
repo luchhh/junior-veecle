@@ -20,11 +20,13 @@ const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 /// Handle returned by MicAbstraction::start().
 /// The actor uses `rx` to receive processed audio chunks and `paused` to
-/// signal the capture thread to discard audio during TTS.
+/// signal the capture thread to discard audio during TTS. `voice_active` is
+/// set by the capture thread while the VAD hears someone talking.
 pub struct MicHandle {
     pub rx: mpsc::Receiver<Vec<f32>>,
     pub native_rate: u32,
     pub paused: Arc<AtomicBool>,
+    pub voice_active: Arc<AtomicBool>,
 }
 
 pub trait MicAbstraction {
@@ -62,17 +64,28 @@ impl MicAbstraction for CpalMic {
 
         let paused = Arc::new(AtomicBool::new(false));
         let paused_thread = paused.clone();
+        let voice_active = Arc::new(AtomicBool::new(false));
+        let voice_active_thread = voice_active.clone();
         let (tx, rx) = mpsc::channel::<Vec<f32>>(4);
 
         std::thread::Builder::new()
             .name("cpal-capture".into())
-            .spawn(move || capture_thread(tx, paused_thread, self.native_rate, self.native_channels))
+            .spawn(move || {
+                capture_thread(
+                    tx,
+                    paused_thread,
+                    voice_active_thread,
+                    self.native_rate,
+                    self.native_channels,
+                )
+            })
             .expect("Failed to spawn audio capture thread");
 
         MicHandle {
             rx,
             native_rate: self.native_rate,
             paused,
+            voice_active,
         }
     }
 }
@@ -182,6 +195,7 @@ fn find_input_device(host: &cpal::Host) -> (cpal::Device, cpal::SupportedStreamC
 fn capture_thread(
     tx: mpsc::Sender<Vec<f32>>,
     paused: Arc<AtomicBool>,
+    voice_active: Arc<AtomicBool>,
     native_rate: u32,
     native_channels: u16,
 ) {
@@ -269,6 +283,7 @@ fn capture_thread(
                 if paused.load(Ordering::Relaxed) {
                     buffer.clear();
                     last_voice = None;
+                    voice_active.store(false, Ordering::Relaxed);
                     continue;
                 }
 
@@ -331,6 +346,8 @@ fn capture_thread(
                         }
                     }
                 }
+
+                voice_active.store(last_voice.is_some(), Ordering::Relaxed);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -389,6 +406,7 @@ impl MicAbstraction for MockMic {
             rx,
             native_rate: TARGET_SAMPLE_RATE,
             paused,
+            voice_active: Arc::new(AtomicBool::new(false)),
         }
     }
 }

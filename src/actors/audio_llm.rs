@@ -2,16 +2,18 @@
 ///
 /// Reads a raw AudioChunk, asks the AI model to interpret it directly via
 /// tool calls, and publishes the command sequence to the Store.
+/// Thinking is set for as long as the request is in flight.
 use veecle_os::runtime::{InitializedReader, Writer};
 
 use crate::llm_client::AudioPrompt;
-use crate::types::{AudioChunk, CommandSequence};
+use crate::types::{AudioChunk, CommandSequence, Thinking};
 
 #[veecle_os::runtime::actor]
 pub async fn audio_llm_actor<C: AudioPrompt + 'static>(
     #[init_context] client: C,
     mut audio_in: InitializedReader<'_, AudioChunk>,
     mut commands_out: Writer<'_, CommandSequence>,
+    mut thinking_out: Writer<'_, Thinking>,
 ) -> std::convert::Infallible {
     loop {
         let chunk = audio_in.wait_for_update().await.read_cloned();
@@ -21,7 +23,11 @@ pub async fn audio_llm_actor<C: AudioPrompt + 'static>(
             seq = format!("{}", chunk.seq)
         );
 
-        match client.ask(&chunk.samples, chunk.sample_rate).await {
+        thinking_out.write(Thinking { active: true }).await;
+        let result = client.ask(&chunk.samples, chunk.sample_rate).await;
+        thinking_out.write(Thinking { active: false }).await;
+
+        match result {
             Ok(commands) => {
                 veecle_os::telemetry::info!(
                     "AudioLLM: commands received",

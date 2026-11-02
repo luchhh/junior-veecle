@@ -49,6 +49,11 @@ keyword_enum! {
 
 keyword_enum! {
     /// A short-lived expression shown on top of the current state.
+    #[cfg_attr(
+        feature = "serde",
+        derive(serde::Serialize, serde::Deserialize),
+        serde(rename_all = "lowercase")
+    )]
     Emotion {
         Happy => "HAPPY",
         Sad => "SAD",

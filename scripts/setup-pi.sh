@@ -38,6 +38,20 @@ if [ ! -f "$REPO_DIR/.env" ]; then
     echo ""
 fi
 
+# --- UART for the LED face (STM32 on GPIO14 TX / GPIO15 RX) ---
+BOOT_CONFIG="/boot/firmware/config.txt"
+BOOT_CMDLINE="/boot/firmware/cmdline.txt"
+if ! grep -q "^dtparam=uart0=on" "$BOOT_CONFIG"; then
+    echo "==> Enabling UART0 on GPIO14/15 (reboot required)..."
+    echo "dtparam=uart0=on" | sudo tee -a "$BOOT_CONFIG" > /dev/null
+fi
+# A login console on the same UART would talk over the display protocol.
+if grep -q "console=serial0" "$BOOT_CMDLINE"; then
+    echo "==> Removing serial console from $BOOT_CMDLINE (reboot required)..."
+    sudo sed -i 's/console=serial0,[0-9]* //' "$BOOT_CMDLINE"
+fi
+sudo usermod -aG dialout "$USER"
+
 # --- systemd service ---
 echo "==> Installing junior systemd service..."
 sudo tee /etc/systemd/system/junior.service > /dev/null << EOF
