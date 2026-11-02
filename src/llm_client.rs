@@ -122,7 +122,113 @@ pub trait AudioPrompt: Send + Sync {
         &self,
         samples: &[f32],
         sample_rate: u32,
+        history: &[String],
+        memories: &[String],
     ) -> impl std::future::Future<Output = Result<Vec<RobotCommand>, ClientError>> + Send;
+}
+
+/// Store and retrieve long-term memories from an external memory sidecar.
+pub trait MemoryClient: Send + Sync {
+    fn search(
+        &self,
+        query: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<String>, ClientError>> + Send;
+
+    fn add(
+        &self,
+        text: &str,
+    ) -> impl std::future::Future<Output = Result<(), ClientError>> + Send;
+}
+
+/// Bundles an [AudioPrompt] client with a [MemoryClient], implementing both traits
+/// by delegating to the respective inner clients.
+pub struct MemoryAwareClient<A, M> {
+    pub audio: A,
+    pub memory: M,
+}
+
+impl<A: AudioPrompt, M: MemoryClient> AudioPrompt for MemoryAwareClient<A, M> {
+    fn ask(
+        &self,
+        samples: &[f32],
+        sample_rate: u32,
+        history: &[String],
+        memories: &[String],
+    ) -> impl std::future::Future<Output = Result<Vec<RobotCommand>, ClientError>> + Send {
+        self.audio.ask(samples, sample_rate, history, memories)
+    }
+}
+
+impl<A: AudioPrompt, M: MemoryClient> MemoryClient for MemoryAwareClient<A, M> {
+    fn search(
+        &self,
+        query: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<String>, ClientError>> + Send {
+        self.memory.search(query)
+    }
+
+    fn add(
+        &self,
+        text: &str,
+    ) -> impl std::future::Future<Output = Result<(), ClientError>> + Send {
+        self.memory.add(text)
+    }
+}
+
+/// mem0 HTTP client — talks to the self-hosted mem0 sidecar on the Pi.
+pub struct Mem0Client {
+    client: reqwest::Client,
+    base_url: String,
+    user_id: String,
+}
+
+impl Mem0Client {
+    pub fn from_env() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: std::env::var("MEM0_URL")
+                .unwrap_or_else(|_| "http://localhost:8000".to_string()),
+            user_id: std::env::var("MEM0_USER_ID").unwrap_or_else(|_| "junior".to_string()),
+        }
+    }
+}
+
+impl MemoryClient for Mem0Client {
+    async fn search(&self, query: &str) -> Result<Vec<String>, ClientError> {
+        let resp = self
+            .client
+            .post(format!("{}/v1/memories/search/", self.base_url))
+            .json(&serde_json::json!({
+                "query": query,
+                "user_id": self.user_id,
+                "limit": 5,
+            }))
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        let memories = resp["results"]
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|r| r["memory"].as_str().map(str::to_owned))
+            .collect();
+
+        Ok(memories)
+    }
+
+    async fn add(&self, text: &str) -> Result<(), ClientError> {
+        self.client
+            .post(format!("{}/v1/memories/", self.base_url))
+            .json(&serde_json::json!({
+                "messages": [{ "role": "assistant", "content": text }],
+                "user_id": self.user_id,
+            }))
+            .send()
+            .await?;
+        Ok(())
+    }
 }
 
 /// Ask an AI model something using text as input, returns parsed commands.
@@ -170,6 +276,8 @@ impl OpenAiClient {
             .json::<serde_json::Value>()
             .await?;
 
+        eprintln!("[DEBUG] full response: {}", serde_json::to_string_pretty(&json).unwrap());
+
         let tool_calls = json["choices"][0]["message"]["tool_calls"]
             .as_array()
             .ok_or_else(|| {
@@ -196,6 +304,8 @@ impl AudioPrompt for OpenAiClient {
         &self,
         samples: &[f32],
         sample_rate: u32,
+        history: &[String],
+        memories: &[String],
     ) -> Result<Vec<RobotCommand>, ClientError> {
         use base64::Engine as _;
 
@@ -204,18 +314,41 @@ impl AudioPrompt for OpenAiClient {
 
         let tools: serde_json::Value = serde_json::from_str(TOOLS).unwrap();
 
+        let system_content = if memories.is_empty() {
+            SYSTEM_PROMPT.to_string()
+        } else {
+            format!("{}\n\n## What you remember:\n{}", SYSTEM_PROMPT, memories.join("\n"))
+        };
+
+        let mut messages: Vec<serde_json::Value> =
+            vec![serde_json::json!({ "role": "system", "content": system_content })];
+
+        for speak in history {
+            messages.push(serde_json::json!({ "role": "assistant", "content": speak }));
+        }
+
+        let mut user_content: Vec<serde_json::Value> = Vec::new();
+        if !history.is_empty() {
+            let history_text = history
+                .iter()
+                .map(|s| format!("- {s}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            user_content.push(serde_json::json!({
+                "type": "text",
+                "text": format!("Earlier in this conversation you said:\n{history_text}"),
+            }));
+        }
+        user_content.push(serde_json::json!({
+            "type": "input_audio",
+            "input_audio": { "data": audio_b64, "format": "wav" },
+        }));
+
+        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
+
         self.chat_completion(serde_json::json!({
             "model": "gpt-audio",
-            "messages": [
-                { "role": "system", "content": SYSTEM_PROMPT },
-                {
-                    "role": "user",
-                    "content": [{
-                        "type": "input_audio",
-                        "input_audio": { "data": audio_b64, "format": "wav" },
-                    }],
-                },
-            ],
+            "messages": messages,
             "tools": tools,
             "tool_choice": "required",
             "temperature": 0.7,
