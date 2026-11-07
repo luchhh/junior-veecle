@@ -24,6 +24,9 @@ pub enum RobotCommand {
     HappyBirthdayGiorgio,
     #[serde(rename = "set_emotion")]
     SetEmotion { emotion: Emotion },
+    /// Skip `speak` for this many minutes; 0 lets Junior talk again.
+    #[serde(rename = "be_quiet")]
+    BeQuiet { minutes: f64 },
 }
 
 /// Arguments of the `respond` tool: the model's whole answer for one turn.
@@ -39,7 +42,8 @@ struct Response {
 struct Action {
     #[serde(rename = "type")]
     kind: ActionKind,
-    /// Seconds for forward/backward, degrees for left/right, unused otherwise.
+    /// Seconds for forward/backward, degrees for left/right, minutes for be_quiet,
+    /// unused otherwise.
     value: f64,
 }
 
@@ -52,12 +56,14 @@ enum ActionKind {
     Right,
     HappyDance,
     HappyBirthdayGiorgio,
+    BeQuiet,
 }
 
 impl RobotCommand {
     /// Turns the `respond` tool arguments into commands: the emotion first, so the face
-    /// reacts right away, then what to say, then the actions in order. Empty parts
-    /// ("" to say, "none" emotion, no actions) produce no command.
+    /// reacts right away, then `be_quiet`, so "you can talk again" isn't itself muted,
+    /// then what to say, then the other actions in order. Empty parts ("" to say, "none"
+    /// emotion, no actions) produce no command.
     pub fn from_response(args: &str) -> Result<Vec<Self>, serde_json::Error> {
         let response: Response = serde_json::from_str(args)?;
         let mut commands = Vec::with_capacity(response.actions.len() + 2);
@@ -66,19 +72,31 @@ impl RobotCommand {
             let emotion = serde_json::from_value(serde_json::Value::String(response.emotion))?;
             commands.push(RobotCommand::SetEmotion { emotion });
         }
+
+        let (quiet, actions): (Vec<Action>, Vec<Action>) =
+            response.actions.into_iter().partition(|a| matches!(a.kind, ActionKind::BeQuiet));
+        commands.extend(quiet.into_iter().map(Action::into_command));
+
         let say = response.say.trim();
         if !say.is_empty() {
             commands.push(RobotCommand::Speak { body: say.to_owned() });
         }
-        commands.extend(response.actions.into_iter().map(|action| match action.kind {
-            ActionKind::Forward => RobotCommand::Forward { secs: action.value },
-            ActionKind::Backward => RobotCommand::Backward { secs: action.value },
-            ActionKind::Left => RobotCommand::Left { deg: action.value },
-            ActionKind::Right => RobotCommand::Right { deg: action.value },
-            ActionKind::HappyDance => RobotCommand::HappyDance,
-            ActionKind::HappyBirthdayGiorgio => RobotCommand::HappyBirthdayGiorgio,
-        }));
+        commands.extend(actions.into_iter().map(Action::into_command));
 
         Ok(commands)
+    }
+}
+
+impl Action {
+    fn into_command(self) -> RobotCommand {
+        match self.kind {
+            ActionKind::Forward => RobotCommand::Forward { secs: self.value },
+            ActionKind::Backward => RobotCommand::Backward { secs: self.value },
+            ActionKind::Left => RobotCommand::Left { deg: self.value },
+            ActionKind::Right => RobotCommand::Right { deg: self.value },
+            ActionKind::HappyDance => RobotCommand::HappyDance,
+            ActionKind::HappyBirthdayGiorgio => RobotCommand::HappyBirthdayGiorgio,
+            ActionKind::BeQuiet => RobotCommand::BeQuiet { minutes: self.value },
+        }
     }
 }

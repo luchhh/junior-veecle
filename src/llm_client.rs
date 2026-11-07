@@ -30,11 +30,11 @@ const RESPOND_TOOL: &str = r#"{
             "properties": {
               "type": {
                 "type": "string",
-                "enum": ["forward", "backward", "left", "right", "happy_dance", "happy_birthday_giorgio"]
+                "enum": ["forward", "backward", "left", "right", "happy_dance", "happy_birthday_giorgio", "be_quiet"]
               },
               "value": {
                 "type": "number",
-                "description": "Seconds for forward/backward, degrees for left/right, 0 for the others."
+                "description": "Seconds for forward/backward, degrees for left/right, minutes for be_quiet (0 to 60), 0 for the others."
               }
             },
             "required": ["type", "value"],
