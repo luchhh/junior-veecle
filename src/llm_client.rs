@@ -285,7 +285,11 @@ impl AudioPrompt for OpenAiClient {
         let system_content = if memories.is_empty() {
             SYSTEM_PROMPT.to_string()
         } else {
-            format!("{}\n\n## What you remember:\n{}", SYSTEM_PROMPT, memories.join("\n"))
+            format!(
+                "{}\n\n## What you remember (oldest first; a later fact overrides an earlier one):\n{}",
+                SYSTEM_PROMPT,
+                memories.join("\n")
+            )
         };
 
         let mut messages: Vec<serde_json::Value> =

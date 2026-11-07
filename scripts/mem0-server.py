@@ -40,6 +40,15 @@ config = {
             "path": os.path.expanduser("~/.junior-mem0"),
         },
     },
+    # Long-term memory only; the robot keeps the last hour of conversation itself.
+    "custom_instructions": (
+        "This is the long-term memory of Junior, a small robot pet. Only keep lasting facts "
+        "about the user, the people and pets in their life, their home, routines and "
+        "preferences. Do not keep greetings, small talk, questions to the robot, requests or "
+        "commands to the robot (moving, being quiet, talking again), what the robot said, or "
+        "unclear, noisy or misheard audio. If a fact corrects an earlier one, state the "
+        "corrected fact on its own."
+    ),
 }
 
 memory = Memory.from_config(config)
