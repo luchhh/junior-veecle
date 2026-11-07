@@ -3,10 +3,19 @@
 /// Reads a raw AudioChunk, asks the AI model to interpret it directly via
 /// tool calls, and publishes the command sequence to the Store.
 /// Thinking is set for as long as the request is in flight.
+///
+/// The model also returns a `heard` transcript of what the user said. It is kept
+/// out of the command sequence and, together with Junior's reply, goes into the
+/// session history and long-term memory.
 use veecle_os::runtime::{InitializedReader, Writer};
 
-use crate::llm_client::{AudioPrompt, MemoryClient};
+use crate::llm_client::{AudioPrompt, MemoryClient, Turn};
 use crate::types::{AudioChunk, CommandSequence, RobotCommand, Thinking};
+
+/// Long-term memories put in the prompt each turn, newest first.
+const MAX_MEMORIES: usize = 100;
+/// Turns of the current conversation sent along with each request.
+const MAX_HISTORY_TURNS: usize = 20;
 
 #[veecle_os::runtime::actor]
 pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
@@ -15,29 +24,19 @@ pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
     mut commands_out: Writer<'_, CommandSequence>,
     mut thinking_out: Writer<'_, Thinking>,
 ) -> std::convert::Infallible {
-    let mut session_history: Vec<String> = Vec::new();
-    let mut last_speak: Option<String> = None;
+    let mut session_history: Vec<Turn> = Vec::new();
 
     loop {
-        let memories = match &last_speak {
-            Some(query) => match MemoryClient::search(&client, query).await {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("[AudioLLM] mem0 search error: {e}");
-                    vec![]
-                }
-            },
-            None => vec![],
-        };
-
-        if memories.is_empty() {
-            eprintln!("[AudioLLM] memories: (none)");
-        } else {
-            eprintln!("[AudioLLM] memories ({}):", memories.len());
-            for m in &memories {
-                eprintln!("  - {m}");
+        // Fetched while waiting for the user, so it costs no reply time and
+        // includes whatever the previous turn stored.
+        let memories = match MemoryClient::recent(&client, MAX_MEMORIES).await {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("[AudioLLM] mem0 recent error: {e}");
+                vec![]
             }
-        }
+        };
+        eprintln!("[AudioLLM] memories: {}", memories.len());
 
         let chunk = audio_in.wait_for_update().await.read_cloned();
         println!("[AudioLLM] processing chunk seq={} samples={}", chunk.seq, chunk.samples.len());
@@ -59,22 +58,26 @@ pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
                     count = format!("{}", commands.len())
                 );
 
-                let speak_text: Option<String> = commands.iter().find_map(|c| {
-                    if let RobotCommand::Speak { body } = c { Some(body.clone()) } else { None }
-                });
-
-                if let Some(text) = &speak_text {
-                    eprintln!("[AudioLLM] adding memory: {text:?}");
-                    if let Err(e) = MemoryClient::add(&client, text).await {
-                        eprintln!("[AudioLLM] mem0 add error: {e}");
-                    }
-                    session_history.push(text.clone());
-                    last_speak = Some(text.clone());
+                let (turn, commands) = split_turn(commands);
+                if turn.user.is_none() {
+                    eprintln!("[AudioLLM] warning: no heard transcript in the response");
                 }
 
                 commands_out
                     .write(CommandSequence { commands, seq: chunk.seq })
                     .await;
+
+                // Junior is already acting; storing the turn doesn't hold up the reply.
+                if turn.user.is_some() || turn.junior.is_some() {
+                    eprintln!("[AudioLLM] remembering: {turn:?}");
+                    if let Err(e) = MemoryClient::add(&client, &turn).await {
+                        eprintln!("[AudioLLM] mem0 add error: {e}");
+                    }
+                    session_history.push(turn);
+                    if session_history.len() > MAX_HISTORY_TURNS {
+                        session_history.remove(0);
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("[AudioLLM] error: {e}");
@@ -82,4 +85,24 @@ pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
             }
         }
     }
+}
+
+/// Separates the conversation turn (what was heard and said) from the commands for the robot.
+fn split_turn(commands: Vec<RobotCommand>) -> (Turn, Vec<RobotCommand>) {
+    let mut turn = Turn::default();
+    let mut actions = Vec::with_capacity(commands.len());
+    for command in commands {
+        match command {
+            RobotCommand::Heard { text } => turn.user = Some(text),
+            RobotCommand::Speak { ref body } => {
+                turn.junior = Some(match turn.junior.take() {
+                    Some(said) => format!("{said} {body}"),
+                    None => body.clone(),
+                });
+                actions.push(command);
+            }
+            other => actions.push(other),
+        }
+    }
+    (turn, actions)
 }

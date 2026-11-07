@@ -133,8 +133,40 @@ const TOOLS: &str = r#"[
       },
       "strict": true
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "heard",
+      "description": "After the tools for your response, also call this with an exact transcript of what the user just said, in the language they spoke. Never call it on its own.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "What the user said, word for word." }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
   }
 ]"#;
+
+/// One exchange of the conversation: what the user said and what Junior said back.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Turn {
+    pub user: Option<String>,
+    pub junior: Option<String>,
+}
+
+impl Turn {
+    fn messages(&self) -> Vec<serde_json::Value> {
+        let user = self.user.iter().map(|t| serde_json::json!({ "role": "user", "content": t }));
+        let junior =
+            self.junior.iter().map(|t| serde_json::json!({ "role": "assistant", "content": t }));
+        user.chain(junior).collect()
+    }
+}
 
 /// Ask an AI model something using raw audio as input, returns parsed commands.
 pub trait AudioPrompt: Send + Sync {
@@ -142,21 +174,23 @@ pub trait AudioPrompt: Send + Sync {
         &self,
         samples: &[f32],
         sample_rate: u32,
-        history: &[String],
+        history: &[Turn],
         memories: &[String],
     ) -> impl std::future::Future<Output = Result<Vec<RobotCommand>, ClientError>> + Send;
 }
 
 /// Store and retrieve long-term memories from an external memory sidecar.
 pub trait MemoryClient: Send + Sync {
-    fn search(
+    /// The most recent `limit` memories, oldest first.
+    fn recent(
         &self,
-        query: &str,
+        limit: usize,
     ) -> impl std::future::Future<Output = Result<Vec<String>, ClientError>> + Send;
 
+    /// Hand a conversation turn to the memory store, which extracts the facts worth keeping.
     fn add(
         &self,
-        text: &str,
+        turn: &Turn,
     ) -> impl std::future::Future<Output = Result<(), ClientError>> + Send;
 }
 
@@ -172,7 +206,7 @@ impl<A: AudioPrompt, M: MemoryClient> AudioPrompt for MemoryAwareClient<A, M> {
         &self,
         samples: &[f32],
         sample_rate: u32,
-        history: &[String],
+        history: &[Turn],
         memories: &[String],
     ) -> impl std::future::Future<Output = Result<Vec<RobotCommand>, ClientError>> + Send {
         self.audio.ask(samples, sample_rate, history, memories)
@@ -180,18 +214,18 @@ impl<A: AudioPrompt, M: MemoryClient> AudioPrompt for MemoryAwareClient<A, M> {
 }
 
 impl<A: AudioPrompt, M: MemoryClient> MemoryClient for MemoryAwareClient<A, M> {
-    fn search(
+    fn recent(
         &self,
-        query: &str,
+        limit: usize,
     ) -> impl std::future::Future<Output = Result<Vec<String>, ClientError>> + Send {
-        self.memory.search(query)
+        self.memory.recent(limit)
     }
 
     fn add(
         &self,
-        text: &str,
+        turn: &Turn,
     ) -> impl std::future::Future<Output = Result<(), ClientError>> + Send {
-        self.memory.add(text)
+        self.memory.add(turn)
     }
 }
 
@@ -214,39 +248,40 @@ impl Mem0Client {
 }
 
 impl MemoryClient for Mem0Client {
-    async fn search(&self, query: &str) -> Result<Vec<String>, ClientError> {
+    async fn recent(&self, limit: usize) -> Result<Vec<String>, ClientError> {
         let resp = self
             .client
-            .post(format!("{}/v1/memories/search/", self.base_url))
-            .json(&serde_json::json!({
-                "query": query,
-                "user_id": self.user_id,
-                "limit": 5,
-            }))
+            .get(format!("{}/v1/memories/", self.base_url))
+            .query(&[("user_id", &self.user_id)])
             .send()
             .await?
             .json::<serde_json::Value>()
             .await?;
 
-        let memories = resp["results"]
-            .as_array()
-            .unwrap_or(&vec![])
+        // created_at is ISO 8601, so sorting the strings sorts by time.
+        let mut results: Vec<&serde_json::Value> =
+            resp["results"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+        results.sort_by_key(|r| r["created_at"].as_str().unwrap_or("").to_owned());
+
+        let memories: Vec<String> = results
             .iter()
             .filter_map(|r| r["memory"].as_str().map(str::to_owned))
             .collect();
+        let skip = memories.len().saturating_sub(limit);
 
-        Ok(memories)
+        Ok(memories.into_iter().skip(skip).collect())
     }
 
-    async fn add(&self, text: &str) -> Result<(), ClientError> {
+    async fn add(&self, turn: &Turn) -> Result<(), ClientError> {
         self.client
             .post(format!("{}/v1/memories/", self.base_url))
             .json(&serde_json::json!({
-                "messages": [{ "role": "assistant", "content": text }],
+                "messages": turn.messages(),
                 "user_id": self.user_id,
             }))
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 }
@@ -324,7 +359,7 @@ impl AudioPrompt for OpenAiClient {
         &self,
         samples: &[f32],
         sample_rate: u32,
-        history: &[String],
+        history: &[Turn],
         memories: &[String],
     ) -> Result<Vec<RobotCommand>, ClientError> {
         use base64::Engine as _;
@@ -343,28 +378,15 @@ impl AudioPrompt for OpenAiClient {
         let mut messages: Vec<serde_json::Value> =
             vec![serde_json::json!({ "role": "system", "content": system_content })];
 
-        for speak in history {
-            messages.push(serde_json::json!({ "role": "assistant", "content": speak }));
-        }
+        messages.extend(history.iter().flat_map(Turn::messages));
 
-        let mut user_content: Vec<serde_json::Value> = Vec::new();
-        if !history.is_empty() {
-            let history_text = history
-                .iter()
-                .map(|s| format!("- {s}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            user_content.push(serde_json::json!({
-                "type": "text",
-                "text": format!("Earlier in this conversation you said:\n{history_text}"),
-            }));
-        }
-        user_content.push(serde_json::json!({
-            "type": "input_audio",
-            "input_audio": { "data": audio_b64, "format": "wav" },
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": [{
+                "type": "input_audio",
+                "input_audio": { "data": audio_b64, "format": "wav" },
+            }],
         }));
-
-        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
 
         self.chat_completion(serde_json::json!({
             "model": "gpt-audio",

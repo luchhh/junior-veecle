@@ -24,6 +24,8 @@ pub enum RobotCommand {
     HappyBirthdayGiorgio,
     #[serde(rename = "set_emotion")]
     SetEmotion { emotion: Emotion },
+    /// Transcript of what the user said. Not an action: the audio actor keeps it for memory.
+    Heard { text: String },
 }
 
 impl RobotCommand {
