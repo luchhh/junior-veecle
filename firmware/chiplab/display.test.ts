@@ -30,6 +30,12 @@ const SPEAKING = [
   NEUTRAL,
   ["00000000", "01100110", "01100110", "00000000", "00111100", "00100100", "00111100", "00000000"],
 ];
+const SLEEPING = [
+  ["00000000", "00000000", "00000000", "00000000", "00000000", "11100000", "01000000", "11100000"],
+  ["00001111", "00000010", "00000100", "00001111", "00000000", "11100000", "01000000", "11100000"],
+  ["00001111", "00000010", "00000100", "00001111", "00000000", "00000000", "00000000", "00000000"],
+  ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+];
 const EMOTIONS: Record<string, string[]> = {
   HAPPY: ["00000000", "01100110", "01100110", "00000000", "10000001", "01000010", "00111100", "00000000"],
   SAD: ["00000000", "01100110", "01100110", "00000000", "00000000", "00111100", "01000010", "10000001"],
@@ -101,6 +107,15 @@ Deno.test("junior display", async (t) => {
     await command("STATE LISTENING");
     const seen = await runAlive(1500);
     expect([...seen].sort()).toEqual(LISTENING.map(key).sort());
+  });
+
+  await t.step("SLEEPING floats Z's up", async () => {
+    await command("STATE SLEEPING");
+    // A full cycle is 4 frames of 600 ms (firmware time), plus margin for the start phase.
+    const seen = await runAlive(3000 * CLOCK_SCALE);
+    expect([...seen].sort()).toEqual(SLEEPING.map(key).sort());
+    // Back to LISTENING for the emotion step, which expects it afterwards.
+    await command("STATE LISTENING");
   });
 
   await t.step("an emotion shows for 3 s, then the state animation returns", async () => {

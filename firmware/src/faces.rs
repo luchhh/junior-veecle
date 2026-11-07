@@ -73,6 +73,14 @@ const SPEAKING: [Frame; 2] = [
     ],
 ];
 
+/// Z's floating up: a small z, then a big Z joins, the small one fades, then nothing.
+const SLEEPING: [Frame; 4] = [
+    [0, 0, 0, 0, 0, 0b1110_0000, 0b0100_0000, 0b1110_0000],
+    [0b0000_1111, 0b0000_0010, 0b0000_0100, 0b0000_1111, 0, 0b1110_0000, 0b0100_0000, 0b1110_0000],
+    [0b0000_1111, 0b0000_0010, 0b0000_0100, 0b0000_1111, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0],
+];
+
 const HAPPY: Frame = [
     0b0000_0000,
     0b0110_0110,
@@ -150,6 +158,7 @@ pub fn state(state: State, millis: u64) -> Frame {
         State::Listening => LISTENING[(millis / 400 % 2) as usize],
         State::Thinking => THINKING[(millis / 250 % 4) as usize],
         State::Speaking => SPEAKING[(millis / 150 % 2) as usize],
+        State::Sleeping => SLEEPING[(millis / 600 % 4) as usize],
     }
 }
 
