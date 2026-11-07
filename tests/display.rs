@@ -4,11 +4,13 @@ use junior_veecle::types::RobotCommand;
 
 #[test]
 fn display_state_priority() {
-    // (speaking, thinking, voice)
-    assert_eq!(display_state(false, false, false), State::Idle);
-    assert_eq!(display_state(false, false, true), State::Listening);
-    assert_eq!(display_state(false, true, true), State::Thinking);
-    assert_eq!(display_state(true, true, true), State::Speaking);
+    // (sleeping, speaking, thinking, voice)
+    assert_eq!(display_state(false, false, false, false), State::Idle);
+    assert_eq!(display_state(false, false, false, true), State::Listening);
+    assert_eq!(display_state(false, false, true, true), State::Thinking);
+    assert_eq!(display_state(false, true, true, true), State::Speaking);
+    // Asleep overrides everything (the idle face until the firmware has a sleeping one).
+    assert_eq!(display_state(true, true, true, true), State::Idle);
 }
 
 #[test]

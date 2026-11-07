@@ -141,6 +141,8 @@ pub async fn command_executor_actor(
                     let duration = quiet.start(minutes, Instant::now());
                     println!("[Executor] quiet for {}s", duration.as_secs());
                 }
+                // The audio actor puts Junior to sleep; nothing to do on the robot.
+                RobotCommand::Sleep => {}
             }
         }
     }

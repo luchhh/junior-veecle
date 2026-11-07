@@ -27,6 +27,9 @@ pub enum RobotCommand {
     /// Skip `speak` for this many minutes; 0 lets Junior talk again.
     #[serde(rename = "be_quiet")]
     BeQuiet { minutes: f64 },
+    /// Go to sleep after this turn. Handled by the audio actor, which then only listens
+    /// locally for the wake-up phrase.
+    Sleep,
 }
 
 /// Arguments of the `respond` tool: the model's whole answer for one turn.
@@ -57,6 +60,7 @@ enum ActionKind {
     HappyDance,
     HappyBirthdayGiorgio,
     BeQuiet,
+    Sleep,
 }
 
 impl RobotCommand {
@@ -97,6 +101,7 @@ impl Action {
             ActionKind::HappyDance => RobotCommand::HappyDance,
             ActionKind::HappyBirthdayGiorgio => RobotCommand::HappyBirthdayGiorgio,
             ActionKind::BeQuiet => RobotCommand::BeQuiet { minutes: self.value },
+            ActionKind::Sleep => RobotCommand::Sleep,
         }
     }
 }

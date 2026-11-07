@@ -3,3 +3,4 @@ pub mod audio_device;
 pub mod llm_client;
 pub mod osal;
 pub mod types;
+pub mod wake;

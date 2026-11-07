@@ -14,6 +14,12 @@ pub struct Thinking {
     pub active: bool,
 }
 
+/// Whether Junior is asleep: it only listens, locally, for the wake-up phrase.
+#[derive(Debug, Clone, Default, PartialEq, Storable, Serialize, Deserialize)]
+pub struct Sleeping {
+    pub active: bool,
+}
+
 /// Latest emotion requested by the AI model, for the LED face.
 #[derive(Debug, Clone, Default, Storable, Serialize, Deserialize)]
 pub struct EmotionCue {

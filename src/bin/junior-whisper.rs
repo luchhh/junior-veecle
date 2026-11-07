@@ -28,6 +28,7 @@ async fn main() {
             junior_veecle::types::Thinking,
             junior_veecle::types::VoiceActivity,
             junior_veecle::types::EmotionCue,
+            junior_veecle::types::Sleeping,
         ],
 
         actors: [
