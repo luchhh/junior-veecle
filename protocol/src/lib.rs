@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! HB                 heartbeat; without any message for 2 s the display shows "disconnected"
-//! STATE <state>      IDLE | LISTENING | THINKING | SPEAKING
+//! STATE <state>      IDLE | LISTENING | THINKING | SPEAKING | SLEEPING
 //! EMOTION <emotion>  HAPPY | SAD | SURPRISED | ANGRY | LOVE (shown for a few seconds)
 //! ```
 //!
@@ -44,6 +44,7 @@ keyword_enum! {
         Listening => "LISTENING",
         Thinking => "THINKING",
         Speaking => "SPEAKING",
+        Sleeping => "SLEEPING",
     }
 }
 
@@ -105,6 +106,7 @@ mod tests {
     fn parses_every_message() {
         assert_eq!(Msg::parse("HB"), Some(Msg::Heartbeat));
         assert_eq!(Msg::parse("STATE THINKING\r"), Some(Msg::State(State::Thinking)));
+        assert_eq!(Msg::parse("STATE SLEEPING"), Some(Msg::State(State::Sleeping)));
         assert_eq!(Msg::parse("EMOTION LOVE"), Some(Msg::Emotion(Emotion::Love)));
     }
 

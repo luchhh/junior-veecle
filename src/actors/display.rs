@@ -3,7 +3,6 @@
 /// Derives what the robot is doing from the Store and mirrors it on the
 /// STM32 LED matrix (see `junior_protocol`):
 ///   sleeping > speaking (CaptureState.paused) > thinking > listening (VAD) > idle
-/// (sleeping shows the idle face until the firmware has a sleeping one)
 ///
 /// The current state is re-sent every 500 ms, which doubles as the display's
 /// heartbeat and restores the face after the STM32 resets. Each new
@@ -21,7 +20,7 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub fn display_state(sleeping: bool, speaking: bool, thinking: bool, voice: bool) -> State {
     if sleeping {
-        State::Idle
+        State::Sleeping
     } else if speaking {
         State::Speaking
     } else if thinking {
