@@ -204,6 +204,30 @@ sudo systemctl daemon-reload
 sudo systemctl enable junior-mem0
 sudo systemctl start junior-mem0
 
+# --- Wake-word listener (local speech-to-text while Junior sleeps) ---
+echo "==> Installing wake-word listener..."
+pip3 install --quiet --break-system-packages faster-whisper fastapi uvicorn 2>/dev/null \
+    || pip3 install --quiet faster-whisper fastapi uvicorn
+sudo cp "$REPO_DIR/scripts/wake-server.py" /usr/local/bin/wake-server.py
+sudo tee /etc/systemd/system/junior-wake.service > /dev/null << EOF
+[Unit]
+Description=Junior Wake-Word Listener
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+ExecStart=/usr/bin/python3 /usr/local/bin/wake-server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable junior-wake
+sudo systemctl start junior-wake
+
 # --- Done ---
 echo "==> Done. Start Junior with: sudo systemctl start junior"
 echo "    Watch logs with:          journalctl -u junior -f"

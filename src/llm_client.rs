@@ -30,7 +30,7 @@ const RESPOND_TOOL: &str = r#"{
             "properties": {
               "type": {
                 "type": "string",
-                "enum": ["forward", "backward", "left", "right", "happy_dance", "happy_birthday_giorgio", "be_quiet"]
+                "enum": ["forward", "backward", "left", "right", "happy_dance", "happy_birthday_giorgio", "be_quiet", "sleep"]
               },
               "value": {
                 "type": "number",
@@ -100,14 +100,24 @@ pub trait MemoryClient: Send + Sync {
     ) -> impl std::future::Future<Output = Result<(), ClientError>> + Send;
 }
 
-/// Bundles an [AudioPrompt] client with a [MemoryClient], implementing both traits
-/// by delegating to the respective inner clients.
-pub struct MemoryAwareClient<A, M> {
-    pub audio: A,
-    pub memory: M,
+/// Transcribes audio on the robot itself, so nothing leaves it while Junior sleeps.
+pub trait WakeListener: Send + Sync {
+    fn transcribe_locally(
+        &self,
+        samples: &[f32],
+        sample_rate: u32,
+    ) -> impl std::future::Future<Output = Result<String, ClientError>> + Send;
 }
 
-impl<A: AudioPrompt, M: MemoryClient> AudioPrompt for MemoryAwareClient<A, M> {
+/// Bundles the cloud client, the [MemoryClient] and the local [WakeListener],
+/// implementing all their traits by delegating to the respective inner clients.
+pub struct MemoryAwareClient<A, M, W> {
+    pub audio: A,
+    pub memory: M,
+    pub wake: W,
+}
+
+impl<A: AudioPrompt, M: MemoryClient, W: Send + Sync> AudioPrompt for MemoryAwareClient<A, M, W> {
     fn ask(
         &self,
         samples: &[f32],
@@ -119,7 +129,7 @@ impl<A: AudioPrompt, M: MemoryClient> AudioPrompt for MemoryAwareClient<A, M> {
     }
 }
 
-impl<A: AudioPrompt, M: MemoryClient> MemoryClient for MemoryAwareClient<A, M> {
+impl<A: Send + Sync, M: MemoryClient, W: Send + Sync> MemoryClient for MemoryAwareClient<A, M, W> {
     fn recent(
         &self,
         limit: usize,
@@ -135,13 +145,56 @@ impl<A: AudioPrompt, M: MemoryClient> MemoryClient for MemoryAwareClient<A, M> {
     }
 }
 
-impl<A: AudioToText, M: MemoryClient> AudioToText for MemoryAwareClient<A, M> {
+impl<A: AudioToText, M: Send + Sync, W: Send + Sync> AudioToText for MemoryAwareClient<A, M, W> {
     fn transcribe(
         &self,
         samples: &[f32],
         sample_rate: u32,
     ) -> impl std::future::Future<Output = Result<String, ClientError>> + Send {
         self.audio.transcribe(samples, sample_rate)
+    }
+}
+
+impl<A: Send + Sync, M: Send + Sync, W: WakeListener> WakeListener for MemoryAwareClient<A, M, W> {
+    fn transcribe_locally(
+        &self,
+        samples: &[f32],
+        sample_rate: u32,
+    ) -> impl std::future::Future<Output = Result<String, ClientError>> + Send {
+        self.wake.transcribe_locally(samples, sample_rate)
+    }
+}
+
+/// HTTP client for the local wake-word sidecar (`scripts/wake-server.py`, faster-whisper).
+pub struct LocalWakeClient {
+    client: reqwest::Client,
+    url: String,
+}
+
+impl LocalWakeClient {
+    pub fn from_env() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            url: std::env::var("WAKE_URL")
+                .unwrap_or_else(|_| "http://localhost:8001/transcribe".to_string()),
+        }
+    }
+}
+
+impl WakeListener for LocalWakeClient {
+    async fn transcribe_locally(&self, samples: &[f32], sample_rate: u32) -> Result<String, ClientError> {
+        let json = self
+            .client
+            .post(&self.url)
+            .header(reqwest::header::CONTENT_TYPE, "audio/wav")
+            .body(encode_wav(samples, sample_rate))
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<serde_json::Value>()
+            .await?;
+
+        Ok(json["text"].as_str().unwrap_or("").trim().to_string())
     }
 }
 

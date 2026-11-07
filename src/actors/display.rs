@@ -2,7 +2,8 @@
 ///
 /// Derives what the robot is doing from the Store and mirrors it on the
 /// STM32 LED matrix (see `junior_protocol`):
-///   speaking (CaptureState.paused) > thinking > listening (VAD) > idle
+///   sleeping > speaking (CaptureState.paused) > thinking > listening (VAD) > idle
+/// (sleeping shows the idle face until the firmware has a sleeping one)
 ///
 /// The current state is re-sent every 500 ms, which doubles as the display's
 /// heartbeat and restores the face after the STM32 resets. Each new
@@ -13,13 +14,15 @@ use junior_protocol::{Msg, State};
 use veecle_os::runtime::Reader;
 
 use crate::osal::display::{Display, DisplayAbstraction as _};
-use crate::types::{CaptureState, EmotionCue, Thinking, VoiceActivity};
+use crate::types::{CaptureState, EmotionCue, Sleeping, Thinking, VoiceActivity};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_millis(500);
 
-pub fn display_state(speaking: bool, thinking: bool, voice: bool) -> State {
-    if speaking {
+pub fn display_state(sleeping: bool, speaking: bool, thinking: bool, voice: bool) -> State {
+    if sleeping {
+        State::Idle
+    } else if speaking {
         State::Speaking
     } else if thinking {
         State::Thinking
@@ -36,6 +39,7 @@ pub async fn display_actor(
     thinking: Reader<'_, Thinking>,
     voice: Reader<'_, VoiceActivity>,
     emotion: Reader<'_, EmotionCue>,
+    sleeping: Reader<'_, Sleeping>,
 ) -> std::convert::Infallible {
     let mut display = Display::new();
     let mut sent_state = None;
@@ -44,6 +48,7 @@ pub async fn display_actor(
 
     loop {
         let state = display_state(
+            sleeping.read(|s: Option<&Sleeping>| s.is_some_and(|s| s.active)),
             capture_state.read(|s: Option<&CaptureState>| s.is_some_and(|s| s.paused)),
             thinking.read(|t: Option<&Thinking>| t.is_some_and(|t| t.active)),
             voice.read(|v: Option<&VoiceActivity>| v.is_some_and(|v| v.active)),

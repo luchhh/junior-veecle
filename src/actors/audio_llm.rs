@@ -7,13 +7,19 @@
 /// The same audio is transcribed in parallel. The transcript and Junior's reply go
 /// into two levels of memory: the session (the last hour, word for word) and
 /// long-term memory (mem0, which keeps only lasting facts).
+///
+/// After a `sleep` action, Junior is asleep: each chunk is only transcribed on the
+/// robot (WakeListener) and checked for the wake-up phrase. Nothing goes to the cloud,
+/// no commands run, and nothing is remembered until Junior wakes up.
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use junior_protocol::Emotion;
 use veecle_os::runtime::{InitializedReader, Writer};
 
-use crate::llm_client::{AudioPrompt, AudioToText, MemoryClient, Turn};
-use crate::types::{AudioChunk, CommandSequence, RobotCommand, Thinking};
+use crate::llm_client::{AudioPrompt, AudioToText, MemoryClient, Turn, WakeListener};
+use crate::types::{AudioChunk, CommandSequence, RobotCommand, Sleeping, Thinking};
+use crate::wake;
 
 /// Long-term memories put in the prompt each turn, newest first.
 const MAX_MEMORIES: usize = 100;
@@ -49,15 +55,38 @@ impl SessionHistory {
 }
 
 #[veecle_os::runtime::actor]
-pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'static>(
+pub async fn audio_llm_actor<
+    C: AudioPrompt + AudioToText + MemoryClient + WakeListener + 'static,
+>(
     #[init_context] client: C,
     mut audio_in: InitializedReader<'_, AudioChunk>,
     mut commands_out: Writer<'_, CommandSequence>,
     mut thinking_out: Writer<'_, Thinking>,
+    mut sleeping_out: Writer<'_, Sleeping>,
 ) -> std::convert::Infallible {
     let mut session = SessionHistory::default();
+    let mut asleep = false;
 
     loop {
+        if asleep {
+            let chunk = audio_in.wait_for_update().await.read_cloned();
+            // The transcript is not logged: while asleep, what is said is private.
+            match WakeListener::transcribe_locally(&client, &chunk.samples, chunk.sample_rate).await {
+                Ok(text) if wake::is_wake_phrase(&text) => {
+                    println!("[AudioLLM] woke up");
+                    asleep = false;
+                    sleeping_out.write(Sleeping { active: false }).await;
+                    let hello = RobotCommand::SetEmotion { emotion: Emotion::Happy };
+                    commands_out
+                        .write(CommandSequence { commands: vec![hello], seq: chunk.seq })
+                        .await;
+                }
+                Ok(_) => println!("[AudioLLM] asleep, no wake-up phrase"),
+                Err(e) => eprintln!("[AudioLLM] wake listener error: {e}"),
+            }
+            continue;
+        }
+
         // Fetched while waiting for the user, so it costs no reply time and
         // includes whatever the previous turn stored.
         let memories = match MemoryClient::recent(&client, MAX_MEMORIES).await {
@@ -110,6 +139,7 @@ pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'stat
                 );
 
                 let junior = spoken_text(&commands);
+                let goes_to_sleep = commands.iter().any(|c| matches!(c, RobotCommand::Sleep));
 
                 commands_out
                     .write(CommandSequence { commands, seq: chunk.seq })
@@ -137,6 +167,13 @@ pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'stat
                         eprintln!("[AudioLLM] mem0 add error: {e}");
                     }
                     session.push(Instant::now(), turn);
+                }
+
+                // This turn still runs (e.g. "buenas noches"); from the next chunk on, Junior sleeps.
+                if goes_to_sleep {
+                    println!("[AudioLLM] going to sleep");
+                    asleep = true;
+                    sleeping_out.write(Sleeping { active: true }).await;
                 }
             }
             Err(e) => {

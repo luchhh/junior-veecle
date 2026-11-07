@@ -1,6 +1,6 @@
 use junior_veecle::actors::llm::LlmActor;
 use junior_veecle::llm_client::{ClientError, TextPrompt};
-use junior_veecle::types::{CommandSequence, RobotCommand, Thinking, TranscribedText};
+use junior_veecle::types::{CommandSequence, RobotCommand, Sleeping, Thinking, TranscribedText};
 use veecle_os::runtime::{Reader, Writer};
 
 struct MockTextPrompt {
@@ -24,7 +24,7 @@ fn llm_actor_forwards_commands_from_client() {
     };
 
     veecle_os_test::block_on_future(veecle_os_test::execute! {
-        store: [TranscribedText, CommandSequence, Thinking],
+        store: [TranscribedText, CommandSequence, Thinking, Sleeping],
 
         actors: [
             LlmActor<MockTextPrompt>: mock,
@@ -34,6 +34,7 @@ fn llm_actor_forwards_commands_from_client() {
             mut text_in: Writer<'a, TranscribedText>,
             mut commands_out: Reader<'a, CommandSequence>,
             mut _thinking: Reader<'a, Thinking>,
+            mut _sleeping: Reader<'a, Sleeping>,
         | {
             text_in.write(TranscribedText { text: "go forward one meter".into(), seq: 1 }).await;
 
