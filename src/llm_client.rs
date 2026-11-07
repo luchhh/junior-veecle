@@ -9,22 +9,6 @@ const TOOLS: &str = r#"[
   {
     "type": "function",
     "function": {
-      "name": "heard",
-      "description": "Always call this first, every turn, with an exact transcript of what the user just said, in the language they spoke.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "text": { "type": "string", "description": "What the user said, word for word." }
-        },
-        "required": ["text"],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "speak",
       "description": "Say something out loud.",
       "parameters": {
@@ -145,6 +129,22 @@ const TOOLS: &str = r#"[
           }
         },
         "required": ["emotion"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "heard",
+      "description": "After the tools for your response, also call this with an exact transcript of what the user just said, in the language they spoke. Never call it on its own.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "What the user said, word for word." }
+        },
+        "required": ["text"],
         "additionalProperties": false
       },
       "strict": true

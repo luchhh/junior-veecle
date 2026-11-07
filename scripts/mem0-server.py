@@ -82,7 +82,8 @@ def search_memory(req: SearchRequest):
 
 @app.get("/v1/memories/")
 def get_all(user_id: str = "junior"):
-    raw = memory.get_all(user_id=user_id)
+    # mem0 returns only 20 by default; the caller picks the newest from the full list.
+    raw = memory.get_all(filters={"user_id": user_id}, top_k=1000)
     return {"results": _results_list(raw)}
 
 
