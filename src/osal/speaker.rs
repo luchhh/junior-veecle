@@ -125,9 +125,10 @@ async fn speak_openai(
     let speech_path = "/tmp/robot_speech.wav";
 
     let body = serde_json::json!({
-        "model": "tts-1",
+        "model": "gpt-4o-mini-tts",
         "voice": "alloy",
         "input": text,
+        "instructions": "When speaking Spanish, speak like a native speaker with a neutral Latin American accent. Sound friendly and playful, like a small robot pet.",
         "response_format": "wav",
     });
 

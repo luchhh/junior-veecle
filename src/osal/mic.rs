@@ -12,9 +12,10 @@ use std::sync::{
 
 use tokio::sync::mpsc;
 
-// VAD parameters — mirror Python's audio_capture.py constants exactly.
-const VAD_THRESHOLD: f32 = 0.0035;
-const SILENCE_THRESHOLD_MS: u64 = 800;
+// VAD parameters, tuned on the robot: a lower threshold and a longer silence timeout than
+// Python's audio_capture.py, so soft speech and short pauses don't end the user's turn.
+const VAD_THRESHOLD: f32 = 0.0025;
+const SILENCE_THRESHOLD_MS: u64 = 1500;
 const MIN_AUDIO_DURATION_SECS: f32 = 0.5;
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 
