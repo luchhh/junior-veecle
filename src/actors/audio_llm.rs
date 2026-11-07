@@ -4,8 +4,12 @@
 /// tool calls, and publishes the command sequence to the Store.
 /// Thinking is set for as long as the request is in flight.
 ///
-/// The same audio is transcribed in parallel. The transcript and Junior's reply
-/// go into the session history and long-term memory.
+/// The same audio is transcribed in parallel. The transcript and Junior's reply go
+/// into two levels of memory: the session (the last hour, word for word) and
+/// long-term memory (mem0, which keeps only lasting facts).
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
 use veecle_os::runtime::{InitializedReader, Writer};
 
 use crate::llm_client::{AudioPrompt, AudioToText, MemoryClient, Turn};
@@ -13,8 +17,36 @@ use crate::types::{AudioChunk, CommandSequence, RobotCommand, Thinking};
 
 /// Long-term memories put in the prompt each turn, newest first.
 const MAX_MEMORIES: usize = 100;
-/// Turns of the current conversation sent along with each request.
-const MAX_HISTORY_TURNS: usize = 20;
+/// How far back the session goes.
+pub const SESSION_WINDOW: Duration = Duration::from_secs(60 * 60);
+/// Cap on session turns, so a long chat doesn't make every request huge.
+pub const MAX_SESSION_TURNS: usize = 30;
+
+/// Session memory: the conversation word for word, for the last [SESSION_WINDOW].
+/// Lives only in this process, so a restart starts a new session.
+#[derive(Debug, Default)]
+pub struct SessionHistory {
+    turns: VecDeque<(Instant, Turn)>,
+}
+
+impl SessionHistory {
+    pub fn push(&mut self, at: Instant, turn: Turn) {
+        self.turns.push_back((at, turn));
+        if self.turns.len() > MAX_SESSION_TURNS {
+            self.turns.pop_front();
+        }
+    }
+
+    /// The turns from the last [SESSION_WINDOW] before `now`, oldest first. Older ones are dropped.
+    pub fn recent(&mut self, now: Instant) -> Vec<Turn> {
+        while let Some((at, _)) = self.turns.front()
+            && now.duration_since(*at) >= SESSION_WINDOW
+        {
+            self.turns.pop_front();
+        }
+        self.turns.iter().map(|(_, turn)| turn.clone()).collect()
+    }
+}
 
 #[veecle_os::runtime::actor]
 pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'static>(
@@ -23,7 +55,7 @@ pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'stat
     mut commands_out: Writer<'_, CommandSequence>,
     mut thinking_out: Writer<'_, Thinking>,
 ) -> std::convert::Infallible {
-    let mut session_history: Vec<Turn> = Vec::new();
+    let mut session = SessionHistory::default();
 
     loop {
         // Fetched while waiting for the user, so it costs no reply time and
@@ -43,6 +75,7 @@ pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'stat
             "AudioLLM: processing chunk",
             seq = format!("{}", chunk.seq)
         );
+        let history = session.recent(Instant::now());
 
         // Transcription runs alongside the request but is only awaited after the commands
         // are out, so it never delays the reply (it is usually, but not always, faster).
@@ -56,7 +89,7 @@ pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'stat
                 &client,
                 &chunk.samples,
                 chunk.sample_rate,
-                &session_history,
+                &history,
                 &memories,
             );
             tokio::pin!(ask);
@@ -103,10 +136,7 @@ pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'stat
                     if let Err(e) = MemoryClient::add(&client, &turn).await {
                         eprintln!("[AudioLLM] mem0 add error: {e}");
                     }
-                    session_history.push(turn);
-                    if session_history.len() > MAX_HISTORY_TURNS {
-                        session_history.remove(0);
-                    }
+                    session.push(Instant::now(), turn);
                 }
             }
             Err(e) => {
