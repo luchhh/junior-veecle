@@ -31,7 +31,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 base64 = "0.22"
 cpal = "0.15"
 hound = "3"
-tokio = { version = "1", features = ["sync", "process", "time", "io-util"] }
+tokio = { version = "1", features = ["sync", "process", "time", "io-util", "macros"] }
 dotenvy = "0.15"
 junior-protocol = { path = "protocol", features = ["serde"] }
 

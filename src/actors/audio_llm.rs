@@ -4,12 +4,11 @@
 /// tool calls, and publishes the command sequence to the Store.
 /// Thinking is set for as long as the request is in flight.
 ///
-/// The model also returns a `heard` transcript of what the user said. It is kept
-/// out of the command sequence and, together with Junior's reply, goes into the
-/// session history and long-term memory.
+/// The same audio is transcribed in parallel. The transcript and Junior's reply
+/// go into the session history and long-term memory.
 use veecle_os::runtime::{InitializedReader, Writer};
 
-use crate::llm_client::{AudioPrompt, MemoryClient, Turn};
+use crate::llm_client::{AudioPrompt, AudioToText, MemoryClient, Turn};
 use crate::types::{AudioChunk, CommandSequence, RobotCommand, Thinking};
 
 /// Long-term memories put in the prompt each turn, newest first.
@@ -18,7 +17,7 @@ const MAX_MEMORIES: usize = 100;
 const MAX_HISTORY_TURNS: usize = 20;
 
 #[veecle_os::runtime::actor]
-pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
+pub async fn audio_llm_actor<C: AudioPrompt + AudioToText + MemoryClient + 'static>(
     #[init_context] client: C,
     mut audio_in: InitializedReader<'_, AudioChunk>,
     mut commands_out: Writer<'_, CommandSequence>,
@@ -45,10 +44,29 @@ pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
             seq = format!("{}", chunk.seq)
         );
 
+        // Transcription runs alongside the request but is only awaited after the commands
+        // are out, so it never delays the reply (it is usually, but not always, faster).
+        let transcription = AudioToText::transcribe(&client, &chunk.samples, chunk.sample_rate);
+        tokio::pin!(transcription);
+        let mut transcript = None;
+
         thinking_out.write(Thinking { active: true }).await;
-        let result =
-            AudioPrompt::ask(&client, &chunk.samples, chunk.sample_rate, &session_history, &memories)
-                .await;
+        let result = {
+            let ask = AudioPrompt::ask(
+                &client,
+                &chunk.samples,
+                chunk.sample_rate,
+                &session_history,
+                &memories,
+            );
+            tokio::pin!(ask);
+            loop {
+                tokio::select! {
+                    result = &mut ask => break result,
+                    text = &mut transcription, if transcript.is_none() => transcript = Some(text),
+                }
+            }
+        };
         thinking_out.write(Thinking { active: false }).await;
 
         match result {
@@ -58,16 +76,28 @@ pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
                     count = format!("{}", commands.len())
                 );
 
-                let (turn, commands) = split_turn(commands);
-                if turn.user.is_none() {
-                    eprintln!("[AudioLLM] warning: no heard transcript in the response");
-                }
+                let junior = spoken_text(&commands);
 
                 commands_out
                     .write(CommandSequence { commands, seq: chunk.seq })
                     .await;
 
-                // Junior is already acting; storing the turn doesn't hold up the reply.
+                // Junior is already acting; finishing the transcript and storing the turn
+                // doesn't hold up the reply.
+                let transcript = match transcript {
+                    Some(text) => text,
+                    None => transcription.await,
+                };
+                let user = match transcript {
+                    Ok(text) if !text.is_empty() => Some(text),
+                    Ok(_) => None,
+                    Err(e) => {
+                        eprintln!("[AudioLLM] transcription error: {e}");
+                        None
+                    }
+                };
+                let turn = Turn { user, junior };
+
                 if turn.user.is_some() || turn.junior.is_some() {
                     eprintln!("[AudioLLM] remembering: {turn:?}");
                     if let Err(e) = MemoryClient::add(&client, &turn).await {
@@ -87,22 +117,14 @@ pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
     }
 }
 
-/// Separates the conversation turn (what was heard and said) from the commands for the robot.
-fn split_turn(commands: Vec<RobotCommand>) -> (Turn, Vec<RobotCommand>) {
-    let mut turn = Turn::default();
-    let mut actions = Vec::with_capacity(commands.len());
-    for command in commands {
-        match command {
-            RobotCommand::Heard { text } => turn.user = Some(text),
-            RobotCommand::Speak { ref body } => {
-                turn.junior = Some(match turn.junior.take() {
-                    Some(said) => format!("{said} {body}"),
-                    None => body.clone(),
-                });
-                actions.push(command);
-            }
-            other => actions.push(other),
-        }
-    }
-    (turn, actions)
+/// Everything Junior says in this turn, joined into one line.
+fn spoken_text(commands: &[RobotCommand]) -> Option<String> {
+    let said: Vec<&str> = commands
+        .iter()
+        .filter_map(|c| match c {
+            RobotCommand::Speak { body } => Some(body.as_str()),
+            _ => None,
+        })
+        .collect();
+    (!said.is_empty()).then(|| said.join(" "))
 }

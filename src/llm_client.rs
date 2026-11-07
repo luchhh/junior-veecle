@@ -133,22 +133,6 @@ const TOOLS: &str = r#"[
       },
       "strict": true
     }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "heard",
-      "description": "After the tools for your response, also call this with an exact transcript of what the user just said, in the language they spoke. Never call it on its own.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "text": { "type": "string", "description": "What the user said, word for word." }
-        },
-        "required": ["text"],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
   }
 ]"#;
 
@@ -226,6 +210,16 @@ impl<A: AudioPrompt, M: MemoryClient> MemoryClient for MemoryAwareClient<A, M> {
         turn: &Turn,
     ) -> impl std::future::Future<Output = Result<(), ClientError>> + Send {
         self.memory.add(turn)
+    }
+}
+
+impl<A: AudioToText, M: MemoryClient> AudioToText for MemoryAwareClient<A, M> {
+    fn transcribe(
+        &self,
+        samples: &[f32],
+        sample_rate: u32,
+    ) -> impl std::future::Future<Output = Result<String, ClientError>> + Send {
+        self.audio.transcribe(samples, sample_rate)
     }
 }
 
@@ -430,8 +424,8 @@ impl AudioToText for OpenAiClient {
             .multipart(
                 reqwest::multipart::Form::new()
                     .part("file", part)
-                    .text("model", "whisper-1")
-                    .text("language", "en"),
+                    // No language hint: Junior is spoken to in English and Spanish.
+                    .text("model", "gpt-4o-mini-transcribe"),
             )
             .send()
             .await?
