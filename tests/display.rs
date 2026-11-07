@@ -12,9 +12,10 @@ fn display_state_priority() {
 }
 
 #[test]
-fn set_emotion_tool_call_parses() {
-    let cmd = RobotCommand::from_tool_call("set_emotion", r#"{"emotion":"surprised"}"#).unwrap();
-    assert!(matches!(cmd, RobotCommand::SetEmotion { emotion: Emotion::Surprised }));
+fn response_emotion_parses() {
+    let cmds =
+        RobotCommand::from_response(r#"{"say":"","emotion":"surprised","actions":[]}"#).unwrap();
+    assert!(matches!(cmds.as_slice(), [RobotCommand::SetEmotion { emotion: Emotion::Surprised }]));
 
-    assert!(RobotCommand::from_tool_call("set_emotion", r#"{"emotion":"bored"}"#).is_err());
+    assert!(RobotCommand::from_response(r#"{"say":"","emotion":"bored","actions":[]}"#).is_err());
 }
