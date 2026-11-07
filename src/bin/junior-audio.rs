@@ -5,10 +5,12 @@
 /// Data flow:
 ///   AudioChunk → [audio_llm_actor] → CommandSequence → [command_executor_actor]
 ///   CaptureState ←──────────────────────────────────────────────────────────────
+///   CaptureState, Thinking, VoiceActivity, EmotionCue → [display_actor] → LED face
 use junior_veecle::actors::{
     audio_capture::AudioCaptureActor,
     audio_llm::AudioLlmActor,
     command_executor::CommandExecutorActor,
+    display::DisplayActor,
 };
 use junior_veecle::llm_client::{Mem0Client, MemoryAwareClient, OpenAiClient};
 
@@ -22,6 +24,9 @@ async fn main() {
             junior_veecle::types::AudioChunk,
             junior_veecle::types::CommandSequence,
             junior_veecle::types::CaptureState,
+            junior_veecle::types::Thinking,
+            junior_veecle::types::VoiceActivity,
+            junior_veecle::types::EmotionCue,
         ],
 
         actors: [
@@ -31,6 +36,7 @@ async fn main() {
                 memory: Mem0Client::from_env(),
             },
             CommandExecutorActor,
+            DisplayActor,
         ],
     }
     .await;

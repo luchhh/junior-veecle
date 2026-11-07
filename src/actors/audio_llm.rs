@@ -2,16 +2,18 @@
 ///
 /// Reads a raw AudioChunk, asks the AI model to interpret it directly via
 /// tool calls, and publishes the command sequence to the Store.
+/// Thinking is set for as long as the request is in flight.
 use veecle_os::runtime::{InitializedReader, Writer};
 
 use crate::llm_client::{AudioPrompt, MemoryClient};
-use crate::types::{AudioChunk, CommandSequence, RobotCommand};
+use crate::types::{AudioChunk, CommandSequence, RobotCommand, Thinking};
 
 #[veecle_os::runtime::actor]
 pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
     #[init_context] client: C,
     mut audio_in: InitializedReader<'_, AudioChunk>,
     mut commands_out: Writer<'_, CommandSequence>,
+    mut thinking_out: Writer<'_, Thinking>,
 ) -> std::convert::Infallible {
     let mut session_history: Vec<String> = Vec::new();
     let mut last_speak: Option<String> = None;
@@ -44,7 +46,13 @@ pub async fn audio_llm_actor<C: AudioPrompt + MemoryClient + 'static>(
             seq = format!("{}", chunk.seq)
         );
 
-        match AudioPrompt::ask(&client, &chunk.samples, chunk.sample_rate, &session_history, &memories).await {
+        thinking_out.write(Thinking { active: true }).await;
+        let result =
+            AudioPrompt::ask(&client, &chunk.samples, chunk.sample_rate, &session_history, &memories)
+                .await;
+        thinking_out.write(Thinking { active: false }).await;
+
+        match result {
             Ok(commands) => {
                 veecle_os::telemetry::info!(
                     "AudioLLM: commands received",

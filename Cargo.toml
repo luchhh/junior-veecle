@@ -33,12 +33,14 @@ cpal = "0.15"
 hound = "3"
 tokio = { version = "1", features = ["sync", "process", "time", "io-util"] }
 dotenvy = "0.15"
+junior-protocol = { path = "protocol", features = ["serde"] }
 
 [dev-dependencies]
 veecle-os-test = "0.1.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rppal = "0.21"
+serialport = { version = "4", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.5"

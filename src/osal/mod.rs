@@ -5,6 +5,7 @@
 ///
 /// When veecle-meta becomes available, these can be replaced by generated adapters
 /// driven by a model.toml hardware definition.
+pub mod display;
 pub mod gpio;
 pub mod mic;
 pub mod speaker;
