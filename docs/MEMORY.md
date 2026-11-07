@@ -1,72 +1,129 @@
 # Memory
 
-Junior should accumulate memories over time — episodic events, facts about the user, derived observations — and use them to behave like a real pet that knows you.
+Junior should remember what you tell it, like a pet that knows you. Memory has two levels:
 
-Two distinct problems:
+- **Session** — the current conversation, word for word, for the last hour.
+- **Long-term** — lasting facts about the user, their home, the people in their life and their preferences, kept indefinitely.
 
-- **Session context** — remembering what was said earlier in the same conversation
-- **Long-term memory** — remembering facts and events across sessions, indefinitely
+Recent context and lasting facts need different handling: what was said a minute ago matters
+word for word but only for a while, while a fact ("the floor is tile, not wood") matters forever
+but only in its final, corrected form.
 
 ---
 
-## Architecture
+## How it works today
 
-### Session context
-
-A `Vec<Message>` held in the actor. Each turn appends the `speak` output from the assistant as a text message. The current turn sends the full history plus the new audio chunk. When the session ends, the history is discarded.
-
-Previous audio is never re-sent — only the text Junior produced. This keeps history cheap.
-
-### Long-term memory
-
-**mem0** (self-hosted, Python sidecar on the Pi) backed by **Chroma** as the local vector store, using **OpenAI embeddings** (`text-embedding-3-small`).
-
-mem0 handles two responsibilities:
-- **Extraction** — after each turn, send the conversation to mem0; it uses the LLM to extract facts worth remembering and stores them in Chroma
-- **Retrieval** — before each turn, search Chroma for memories relevant to the current context; inject them into the system prompt
-
-All data lives on the Pi. Only the embedding API calls leave (text sent to OpenAI to generate vectors — same privacy bar as the existing LLM calls).
-
-### Memory retrieval timing
-
-The audio model (`gpt-audio`) does not return a transcript of the input. To search memories semantically you need text, but text is only available *after* the call (the `speak` output).
-
-Solution: search using the **previous turn's speak output** as the query. One turn of lag, imperceptible in conversation.
-
-### Prompt structure per turn
+### Each turn
 
 ```
-system:    SYSTEM_PROMPT + "\n\n## What you remember:\n" + top_k_memories   ← rebuilt each turn
-assistant: "Hola! ¿En qué te puedo ayudar?"                                  ← previous turns (text only)
-user:      [{ type: text, text: session_context }, { type: audio, ... }]     ← current turn
+audio chunk ──┬─> gpt-audio (forced `respond` tool) ──> commands ──> robot
+              └─> gpt-4o-mini-transcribe ──────────────> transcript ─┐
+                                                                      ├─> session + mem0
+                         Junior's `say` from the response ───────────┘
 ```
 
-The system prompt is rebuilt on every turn. Sending the same memories repeatedly is fine — OpenAI prompt caching handles repeated prefixes at 50% cost.
+- The audio goes to `gpt-audio` and, in parallel, to `gpt-4o-mini-transcribe`. The transcript is
+  awaited only after the commands are sent, so it never delays the reply (it is usually, but not
+  always, faster).
+- The prompt carries the long-term memories (oldest first; "a later fact overrides an earlier one")
+  and the session turns as user/assistant messages.
 
-### Audio + text in the same call
+### Session
 
-The OpenAI chat completions API supports mixed content arrays. Memory context and session history are injected as text items alongside the audio input in the same API call. No extra round trips.
+`SessionHistory` in `src/actors/audio_llm.rs`: the turns of the last 60 minutes, at most 30, held in
+the `junior` process. A restart starts an empty session.
+
+### Long-term
+
+mem0 (Python sidecar, `scripts/mem0-server.py`, Chroma + OpenAI embeddings). Each turn is sent to
+mem0, whose LLM (`gpt-4o-mini`) extracts facts. `custom_instructions` ask it to keep only lasting
+facts. Each turn loads the newest 100 memories; there is no search.
+
+### Sleep
+
+While Junior sleeps, audio is only transcribed on the robot (`scripts/wake-server.py`) to listen
+for the wake-up phrase. Nothing reaches the session or long-term memory.
 
 ---
 
-## What we are not doing (now)
+## Lessons learned
 
-**Local embeddings via Ollama** — `nomic-embed-text` would make embeddings fully air-gapped, but adds Ollama as a dependency and is unnecessary given the existing OpenAI relationship. Revisit if privacy requirements change.
-
-**Neo4j graph store** — mem0 supports an optional graph layer for relationship reasoning ("Giorgio is Luis's friend"). Skip for now, start with Chroma only.
-
-**OpenAI Assistants API threads** — would delegate session history to OpenAI, but audio input is not supported on that endpoint, and history would live on the provider.
-
-**Transcribe tool hack** — forcing gpt-audio to call a `transcribe(text)` tool first to expose what it heard. Works but is semantically wrong and may confuse the model. Skip.
-
-**Cloud Whisper before main call** — calling the Whisper API first to get a transcript for same-turn memory search. Fast (< 1s) and cheap ($0.006/min), but adds an extra API call per turn. Not worth it at this stage.
+- **Don't make the model report what it heard.** A `heard` tool was unreliable: `gpt-audio` often
+  answers with a single tool call, so `heard` either replaced the reply (Junior went mute) or was
+  dropped (6/6 → 3/6 once another tool was added). A separate transcription call is deterministic.
+- **Free tool calls are unreliable with `gpt-audio`.** It frequently stopped after one call
+  (an emotion without the speech, the speech without the movement). One forced `respond` tool in
+  strict mode (`say`, `emotion`, `actions[]`) fixed it. `response_format: json_schema` is not
+  supported by `gpt-audio`.
+- **Searching memories needs the current question as text**, which only exists after the reply.
+  Searching with the previous reply found the wrong things. With few memories, sending all of them
+  is simpler and always right.
+- **mem0 2.0 limits:**
+  - `get_all` returns 20 memories by default; newer ones were invisible until `top_k` was raised.
+  - It is ADD-only: corrections and rewordings pile up next to the old version
+    ("wooden floor" stays next to "tile floor"; the same fact appears three times).
+  - Its extraction prompt (~33k chars) asks to capture everything, including plans and events.
+    `custom_instructions` are appended at the end and only help so much: "Yo me voy a dormir unos
+    minutos" became the memory "User is going to sleep for a few minutes", which later made a fresh
+    session go to sleep on its first, unclear chunk.
+- **Judging each turn alone lacks context.** Whether something is a lasting fact or only true for
+  the moment is often clear from the rest of the conversation, not from the single turn.
 
 ---
 
-## Future
+## Planned: hourly condenser
 
-- **Local embeddings** — swap OpenAI embeddings for Ollama + `nomic-embed-text` for full air-gap
-- **Graph store** — add Neo4j to mem0 for richer relationship reasoning across memories
-- **Same-turn transcript** — cloud Whisper before the main call enables searching memories with the *current* turn's content rather than the previous one
-- **Memory inspection UI** — mem0 exposes `get_all()`, could surface this in the existing mic volume web UI
-- **Memory pruning** — deduplicate and consolidate memories periodically as they accumulate over years
+Replace per-turn extraction with a periodic consolidation over the whole conversation.
+
+### Session log on disk
+
+Every turn is appended, with its timestamp, to `~/.junior/session.jsonl` as it happens. This is
+what makes the design safe against shutdowns: nothing lives only in the process.
+
+- At startup, turns from the last hour are loaded back into the session, so a restart or deploy
+  doesn't make Junior forget the conversation it was having.
+- A half-written last line (power cut) is skipped.
+
+### Condenser
+
+Every hour, and at startup for anything left over:
+
+1. Take the current facts and the session-log turns not condensed yet.
+2. One LLM call (e.g. `gpt-4o-mini`): *"Here is what you know about the user and today's
+   conversation. Return the updated list of lasting facts: merge duplicates, apply corrections
+   (newer wins), drop anything only true for the moment. Never drop a fact unless it is
+   contradicted or clearly temporary."*
+3. Save the new list (backing up the previous one and logging the diff), then mark those turns as
+   condensed.
+
+A shutdown before the hour is up loses nothing: the turns are on disk and get condensed at the next
+start.
+
+### Storage: `facts.json` instead of mem0
+
+With the condenser doing the extraction and no search in use, mem0 would only be storage. A plain
+`~/.junior/facts.json` (read every turn, rewritten by the condenser) is simpler: one service less,
+no Chroma, no embedding calls, and a file that can be read or edited by hand. The condenser can
+start from the current mem0 facts.
+
+### Why this is better
+
+- The condenser sees the whole hour, so temporary things are recognisable as temporary.
+- Duplicates and contradictions are cleaned on every run instead of accumulating.
+- One LLM call per hour instead of one per turn.
+
+### Risks
+
+- The LLM drops a real fact → backup and diff on every run; instruction to drop only contradicted
+  or temporary facts.
+- Facts grow into the thousands → bring back search (embeddings or keyword), only then.
+
+---
+
+## Not doing (now)
+
+- **Local embeddings / graph store** — no search is needed while all facts fit in the prompt.
+- **Search per turn** — would need a transcript before the reply (+0.5–1 s per turn) or a second
+  model round trip; not worth it with a few dozen facts.
+- **A `recall` tool** — reintroduces the free-tool-call unreliability; if search is ever needed,
+  a `recall` field inside `respond` is the safer shape.
