@@ -142,7 +142,9 @@ fi
 WATCHDOG
 
 sudo chmod +x /usr/local/bin/wifi-watchdog.sh
-(sudo crontab -l 2>/dev/null | grep -v wifi-watchdog; echo '* * * * * /usr/local/bin/wifi-watchdog.sh') | sudo crontab -
+# `|| true`: with no other entries, grep -v outputs nothing and exits 1, which under
+# `set -eo pipefail` would end the subshell before the echo and install an empty crontab.
+{ sudo crontab -l 2>/dev/null | grep -v wifi-watchdog || true; echo '* * * * * /usr/local/bin/wifi-watchdog.sh'; } | sudo crontab -
 
 # --- Tailscale ---
 if ! command -v tailscale &>/dev/null; then
