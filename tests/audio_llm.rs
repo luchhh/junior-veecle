@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use junior_veecle::actors::audio_llm::AudioLlmActor;
-use junior_veecle::llm_client::{AudioPrompt, ClientError, MemoryClient, Turn};
+use junior_veecle::llm_client::{AudioPrompt, AudioToText, ClientError, MemoryClient, Turn};
 use junior_veecle::types::{AudioChunk, CommandSequence, RobotCommand, Thinking};
 use veecle_os::runtime::{Reader, Writer};
 
@@ -13,7 +13,8 @@ struct Calls {
     added: Vec<Turn>,
 }
 
-/// Answers every chunk with `heard` + `speak`, and remembers each added turn as a "fact".
+/// A chunk's length stands for its number n: the transcript is "user n" and Junior answers
+/// "junior n". Every added turn is remembered as a "fact".
 struct MockClient {
     calls: Arc<Mutex<Calls>>,
 }
@@ -21,20 +22,25 @@ struct MockClient {
 impl AudioPrompt for MockClient {
     fn ask(
         &self,
-        _samples: &[f32],
+        samples: &[f32],
         _sample_rate: u32,
         history: &[Turn],
         memories: &[String],
     ) -> impl std::future::Future<Output = Result<Vec<RobotCommand>, ClientError>> + Send {
-        let mut calls = self.calls.lock().unwrap();
-        let n = calls.asks.len() + 1;
-        calls.asks.push((history.to_vec(), memories.to_vec()));
-        async move {
-            Ok(vec![
-                RobotCommand::Heard { text: format!("user {n}") },
-                RobotCommand::Speak { body: format!("junior {n}") },
-            ])
-        }
+        self.calls.lock().unwrap().asks.push((history.to_vec(), memories.to_vec()));
+        let n = samples.len();
+        async move { Ok(vec![RobotCommand::Speak { body: format!("junior {n}") }]) }
+    }
+}
+
+impl AudioToText for MockClient {
+    fn transcribe(
+        &self,
+        samples: &[f32],
+        _sample_rate: u32,
+    ) -> impl std::future::Future<Output = Result<String, ClientError>> + Send {
+        let n = samples.len();
+        async move { Ok(format!("user {n}")) }
     }
 }
 
@@ -57,7 +63,7 @@ impl MemoryClient for MockClient {
 }
 
 fn chunk(seq: u64) -> AudioChunk {
-    AudioChunk { samples: vec![0.0; 16], sample_rate: 16_000, seq }
+    AudioChunk { samples: vec![0.0; seq as usize], sample_rate: 16_000, seq }
 }
 
 fn turn(n: u32) -> Turn {
@@ -65,7 +71,7 @@ fn turn(n: u32) -> Turn {
 }
 
 #[test]
-fn audio_llm_remembers_both_sides_and_keeps_heard_off_the_robot() {
+fn audio_llm_remembers_the_transcript_and_the_reply() {
     let calls = Arc::new(Mutex::new(Calls::default()));
     let mock = MockClient { calls: calls.clone() };
 

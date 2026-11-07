@@ -106,8 +106,6 @@ pub async fn command_executor_actor(
                         .write(EmotionCue { emotion: Some(emotion), seq: emotion_seq })
                         .await;
                 }
-                // Only meaningful to the LLM actors; nothing to do on the robot.
-                RobotCommand::Heard { .. } => {}
             }
         }
     }

@@ -5,152 +5,58 @@ pub type ClientError = Box<dyn std::error::Error + Send + Sync>;
 const SYSTEM_PROMPT: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/system.md"));
 
-const TOOLS: &str = r#"[
-  {
-    "type": "function",
-    "function": {
-      "name": "speak",
-      "description": "Say something out loud.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "body": { "type": "string", "description": "Text to say." }
+/// The only tool, and the model is forced to call it: with free tool calls gpt-audio often
+/// stopped after the first one (e.g. an emotion without the speech). Strict mode makes every
+/// field present and valid; empty values mean "nothing this turn".
+const RESPOND_TOOL: &str = r#"{
+  "type": "function",
+  "function": {
+    "name": "respond",
+    "description": "Your whole response for this turn: what to say, the emotion to show, and the actions to take.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "say": { "type": "string", "description": "What to say out loud, or empty to stay silent." },
+        "emotion": {
+          "type": "string",
+          "enum": ["none", "happy", "sad", "surprised", "angry", "love"],
+          "description": "Emotion to show on your LED face for a few seconds, or none."
         },
-        "required": ["body"],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "forward",
-      "description": "Move forward for a given duration.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "secs": { "type": "number", "description": "Duration in seconds." }
-        },
-        "required": ["secs"],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "backward",
-      "description": "Move backward for a given duration.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "secs": { "type": "number", "description": "Duration in seconds." }
-        },
-        "required": ["secs"],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "left",
-      "description": "Spin left (counterclockwise) by a given angle.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "deg": { "type": "number", "description": "Angle in degrees." }
-        },
-        "required": ["deg"],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "right",
-      "description": "Spin right (clockwise) by a given angle.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "deg": { "type": "number", "description": "Angle in degrees." }
-        },
-        "required": ["deg"],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "happy_dance",
-      "description": "Express happiness or excitement with a celebratory wiggle. Use it spontaneously whenever something good happens, a compliment is given, or the mood calls for it — don't wait to be asked.",
-      "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "happy_birthday_giorgio",
-      "description": "Play a special happy birthday tango song for Giorgio. Use it proactively whenever Giorgio's birthday is mentioned or celebrated — don't wait to be explicitly asked.",
-      "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "set_emotion",
-      "description": "Show an emotion on your LED face for a few seconds. Use it often and spontaneously to react to the conversation, usually as the first tool call: happy for good news or compliments, sad for bad news, surprised for unexpected things, angry when insulted, love for affection.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "emotion": {
-            "type": "string",
-            "enum": ["happy", "sad", "surprised", "angry", "love"],
-            "description": "Emotion to show."
+        "actions": {
+          "type": "array",
+          "description": "Actions to take in order, or empty.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["forward", "backward", "left", "right", "happy_dance", "happy_birthday_giorgio"]
+              },
+              "value": {
+                "type": "number",
+                "description": "Seconds for forward/backward, degrees for left/right, 0 for the others."
+              }
+            },
+            "required": ["type", "value"],
+            "additionalProperties": false
           }
-        },
-        "required": ["emotion"],
-        "additionalProperties": false
+        }
       },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "heard",
-      "description": "After the tools for your response, also call this with an exact transcript of what the user just said, in the language they spoke. Never call it on its own.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "text": { "type": "string", "description": "What the user said, word for word." }
-        },
-        "required": ["text"],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
+      "required": ["say", "emotion", "actions"],
+      "additionalProperties": false
+    },
+    "strict": true
   }
-]"#;
+}"#;
+
+/// Request fields that make the model answer with exactly one `respond` call.
+fn respond_tool_fields() -> serde_json::Value {
+    let tool: serde_json::Value = serde_json::from_str(RESPOND_TOOL).unwrap();
+    serde_json::json!({
+        "tools": [tool],
+        "tool_choice": { "type": "function", "function": { "name": "respond" } },
+    })
+}
 
 /// One exchange of the conversation: what the user said and what Junior said back.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -226,6 +132,16 @@ impl<A: AudioPrompt, M: MemoryClient> MemoryClient for MemoryAwareClient<A, M> {
         turn: &Turn,
     ) -> impl std::future::Future<Output = Result<(), ClientError>> + Send {
         self.memory.add(turn)
+    }
+}
+
+impl<A: AudioToText, M: MemoryClient> AudioToText for MemoryAwareClient<A, M> {
+    fn transcribe(
+        &self,
+        samples: &[f32],
+        sample_rate: u32,
+    ) -> impl std::future::Future<Output = Result<String, ClientError>> + Send {
+        self.audio.transcribe(samples, sample_rate)
     }
 }
 
@@ -319,8 +235,14 @@ impl OpenAiClient {
 
     async fn chat_completion(
         &self,
-        body: serde_json::Value,
+        mut body: serde_json::Value,
     ) -> Result<Vec<RobotCommand>, ClientError> {
+        if let (Some(body), serde_json::Value::Object(fields)) =
+            (body.as_object_mut(), respond_tool_fields())
+        {
+            body.extend(fields);
+        }
+
         let json = self
             .client
             .post("https://api.openai.com/v1/chat/completions")
@@ -333,24 +255,16 @@ impl OpenAiClient {
 
         eprintln!("[DEBUG] full response: {}", serde_json::to_string_pretty(&json).unwrap());
 
-        let tool_calls = json["choices"][0]["message"]["tool_calls"]
+        let args = json["choices"][0]["message"]["tool_calls"]
             .as_array()
+            .and_then(|calls| calls.iter().find(|c| c["function"]["name"] == "respond"))
+            .and_then(|call| call["function"]["arguments"].as_str())
             .ok_or_else(|| {
                 eprintln!("[AudioLLM] unexpected response: {json}");
-                "no tool_calls in response"
+                "no respond call in response"
             })?;
 
-        let commands = tool_calls
-            .iter()
-            .map(|tc| {
-                let name = tc["function"]["name"].as_str().unwrap_or("");
-                let args = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                RobotCommand::from_tool_call(name, args)
-                    .map_err(|e| Box::new(e) as ClientError)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(commands)
+        Ok(RobotCommand::from_response(args)?)
     }
 }
 
@@ -367,7 +281,6 @@ impl AudioPrompt for OpenAiClient {
         let audio_b64 =
             base64::engine::general_purpose::STANDARD.encode(encode_wav(samples, sample_rate));
 
-        let tools: serde_json::Value = serde_json::from_str(TOOLS).unwrap();
 
         let system_content = if memories.is_empty() {
             SYSTEM_PROMPT.to_string()
@@ -391,8 +304,6 @@ impl AudioPrompt for OpenAiClient {
         self.chat_completion(serde_json::json!({
             "model": "gpt-audio",
             "messages": messages,
-            "tools": tools,
-            "tool_choice": "required",
             "temperature": 0.7,
         }))
         .await
@@ -401,7 +312,6 @@ impl AudioPrompt for OpenAiClient {
 
 impl TextPrompt for OpenAiClient {
     async fn ask(&self, text: &str) -> Result<Vec<RobotCommand>, ClientError> {
-        let tools: serde_json::Value = serde_json::from_str(TOOLS).unwrap();
 
         self.chat_completion(serde_json::json!({
             "model": "gpt-4o-mini",
@@ -409,8 +319,6 @@ impl TextPrompt for OpenAiClient {
                 { "role": "system", "content": SYSTEM_PROMPT },
                 { "role": "user", "content": text },
             ],
-            "tools": tools,
-            "tool_choice": "required",
             "temperature": 0.7,
         }))
         .await
@@ -430,8 +338,8 @@ impl AudioToText for OpenAiClient {
             .multipart(
                 reqwest::multipart::Form::new()
                     .part("file", part)
-                    .text("model", "whisper-1")
-                    .text("language", "en"),
+                    // No language hint: Junior is spoken to in English and Spanish.
+                    .text("model", "gpt-4o-mini-transcribe"),
             )
             .send()
             .await?
